@@ -95,19 +95,24 @@
         
         <input type="text" id="searchInput" class="search-box" placeholder="PLZ, Ort oder Netzkennung eingeben..." onkeyup="handleSearchInput()">
 
+        <div style="font-size:11px;font-weight:800;color:#475569;text-transform:uppercase;letter-spacing:.5px;margin:4px 0 8px;">Center / BU</div>
+        <div class="filter-group"><label><span class="dot" style="background:#10b981"></span> Mixed = Light + Heavy</label></div>
+        <div class="filter-group"><label><span class="dot" style="background:#3b82f6"></span> Light = Light vorhanden</label></div>
+        <div class="filter-group"><label><span class="dot" style="background:#f97316"></span> Heavy = Heavy vorhanden</label></div>
+        <div class="filter-group"><label><input id="showCenters" type="checkbox" value="CENTER" checked onchange="filterMap()"> Alle Center anzeigen</label></div>
+
+        <div style="font-size:11px;font-weight:800;color:#475569;text-transform:uppercase;letter-spacing:.5px;margin:14px 0 8px;border-top:1px solid #e2e8f0;padding-top:10px;">Regionaler Bedarf / 50 km</div>
         <div class="filter-group">
-            <label><input type="checkbox" value="Beide Bedarfe" checked onchange="filterMap()"> <span class="hatch-swatch" style="background:repeating-linear-gradient(45deg,rgba(239,68,68,.18) 0 4px,#dc2626 4px 6px)"></span> Light + Heavy fehlen</label>
+            <label><input type="checkbox" value="Beide Bedarfe" checked onchange="filterMap()"> <span class="hatch-swatch" style="background:repeating-linear-gradient(45deg,rgba(239,68,68,.18) 0 4px,#dc2626 4px 6px)"></span> Rot = Light + Heavy fehlen</label>
         </div>
         <div class="filter-group">
-            <label><input type="checkbox" value="LKW/Heavy Bedarf" checked onchange="filterMap()"> <span class="hatch-swatch hatch-heavy"></span> Heavy-Bedarfsgebiete</label>
+            <label><input type="checkbox" value="LKW/Heavy Bedarf" checked onchange="filterMap()"> <span class="hatch-swatch hatch-heavy"></span> Orange = Heavy fehlt</label>
         </div>
         <div class="filter-group">
-            <label><input type="checkbox" value="PKW/Light Bedarf" checked onchange="filterMap()"> <span class="hatch-swatch hatch-light"></span> Light-Bedarfsgebiete</label>
+            <label><input type="checkbox" value="PKW/Light Bedarf" checked onchange="filterMap()"> <span class="hatch-swatch hatch-light"></span> Blau = Light fehlt</label>
         </div>
-        <div class="filter-group">
-            <label><input id="showCenters" type="checkbox" value="CENTER" checked onchange="filterMap()"> <span class="dot" style="background:#1e293b"></span> Alle Center anzeigen</label>
-        </div>
-        <div class="legend-note"><b>Logik über BU + 50 km:</b><br>Light benötigt Heavy, sofern kein Heavy/Mixed im Radius liegt. Heavy benötigt Light, sofern kein Light/Mixed im Radius liegt. Mixed deckt beide Bereiche ab.</div>
+        <div class="filter-group"><label><span class="hatch-swatch" style="background:#fff"></span> Weiß = Light + Heavy abgedeckt</label></div>
+        <div class="legend-note"><b>So liest du die Karte:</b><br>Die <b>Punktfarbe</b> zeigt nur den BU-Typ des Centers. Die <b>schraffierte Fläche</b> zeigt den regionalen Bedarf. Für jeden Ort wird geprüft, ob innerhalb von 50 km Light und Heavy vorhanden sind. Mixed deckt beides ab.</div>
         
         <div style="font-size: 11px; color: #64748b; margin-top: 8px; border-top: 1px solid #eee; padding-top: 8px;">
             📍 <b>Tipp:</b> Gib eine PLZ ein (z. B. 60318) für den automatischen <b>50 km Radius-Check</b>!
@@ -305,94 +310,132 @@
             return '#10b981';
         }
 
+        function unionFeatures(features) {
+            if (!features.length) return null;
+            if (features.length === 1) return features[0];
+            try {
+                return turf.union(turf.featureCollection(features));
+            } catch (e) {
+                console.warn('Union fehlgeschlagen, versuche schrittweise:', e);
+                let result = features[0];
+                for (let i = 1; i < features.length; i++) {
+                    try {
+                        result = turf.union(turf.featureCollection([result, features[i]]));
+                    } catch (_) {}
+                }
+                return result;
+            }
+        }
+
+        function geoDifference(a, b) {
+            if (!a) return null;
+            if (!b) return a;
+            try { return turf.difference(turf.featureCollection([a, b])); }
+            catch (e) { console.warn('Difference:', e); return a; }
+        }
+
+        function geoIntersect(a, b) {
+            if (!a || !b) return null;
+            try { return turf.intersect(turf.featureCollection([a, b])); }
+            catch (e) { console.warn('Intersect:', e); return null; }
+        }
+
+        function addDemandPolygon(feature, status) {
+            if (!feature) return;
+            const color = status === 'Beide Bedarfe' ? '#ef4444'
+                : status === 'LKW/Heavy Bedarf' ? '#f97316' : '#3b82f6';
+
+            const layer = L.geoJSON(feature, {
+                style: {
+                    color: color,
+                    weight: 1.3,
+                    opacity: 0.75,
+                    fillColor: color,
+                    fillOpacity: 0.18
+                },
+                interactive: true,
+                onEachFeature: function(feature, poly) {
+                    poly.on('add', function() {
+                        ensureHatchPatterns();
+                        if (poly._path) poly._path.setAttribute('fill', patternForStatus(status));
+                    });
+                    poly.on('click', function(e) {
+                        const state = getCoverageState(e.latlng.lat, e.latlng.lng);
+                        const nearby = state.nearby.sort((a,b)=>a.distance-b.distance).slice(0,12);
+                        const list = nearby.map(n =>
+                            `<div style="font-size:11px;padding:3px 0;border-bottom:1px dashed #ddd">
+                                <b>${n.ort || n.plz || n.kst}</b> – BU ${n.buType} (${n.distance.toFixed(1)} km)
+                             </div>`).join('');
+
+                        const title = state.status === 'Beide Bedarfe' ? 'Light + Heavy fehlen'
+                            : state.status === 'LKW/Heavy Bedarf' ? 'Heavy fehlt' : 'Light fehlt';
+                        const reason = state.status === 'Beide Bedarfe'
+                            ? 'Kein Light/Mixed und kein Heavy/Mixed innerhalb von 50 km.'
+                            : state.status === 'LKW/Heavy Bedarf'
+                                ? 'Light ist abgedeckt, aber es gibt kein Heavy/Mixed innerhalb von 50 km.'
+                                : 'Heavy ist abgedeckt, aber es gibt kein Light/Mixed innerhalb von 50 km.';
+
+                        L.popup().setLatLng(e.latlng).setContent(
+                            `<div class="popup-header"><h4>${title}</h4><p>Regionaler Bedarf im 50-km-Radius</p></div>
+                             <div class="popup-body">
+                                <span class="badge" style="background:${color}">${state.status}</span>
+                                <div class="radius-info-box"><b>Warum diese Farbe?</b><br>${reason}</div>
+                                <div class="section-title">Center im 50-km-Umkreis (${state.nearby.length})</div>
+                                ${list || '<b>Keine Center im 50-km-Umkreis.</b>'}
+                             </div>`
+                        ).openOn(map);
+                        L.DomEvent.stopPropagation(e);
+                    });
+                }
+            }).addTo(map);
+            demandAreas.push({layer, status});
+        }
+
         async function buildDemandSurface() {
             demandAreas.forEach(item => map.removeLayer(item.layer));
             demandAreas = [];
-            setStatus('🗺️ Berechne flächendeckende 50-km-Versorgungsanalyse…');
+            setStatus('🗺️ Berechne echte zusammenhängende 50-km-Bedarfsflächen…');
 
             try {
                 const res = await fetch('https://raw.githubusercontent.com/johan/world.geo.json/master/countries/DEU.geo.json');
                 if (!res.ok) throw new Error('Deutschland-Grenze nicht ladbar');
                 const germany = await res.json();
 
-                // Dichtes 8-km-Raster über GANZ Deutschland. Die Rasterkanten werden
-                // unsichtbar gezeichnet, sodass optisch zusammenhängende Zonen entstehen.
-                // Auch Gebiete ohne irgendein Center werden bewertet.
-                const grid = turf.squareGrid([5.75, 47.15, 15.10, 55.10], 8, {units:'kilometers'});
-                const groups = {
-                    'Beide Bedarfe': [],
-                    'LKW/Heavy Bedarf': [],
-                    'PKW/Light Bedarf': []
-                };
+                // Versorgung entsteht als echte 50-km-Pufferfläche um ALLE passenden Center.
+                // Mixed fließt in Light UND Heavy ein.
+                const lightBuffers = rawCenterData
+                    .filter(c => c.buType === 'Light' || c.buType === 'Mixed')
+                    .map(c => turf.buffer(turf.point([c.lng, c.lat]), 50, {units:'kilometers', steps:24}));
 
-                grid.features.forEach(feature => {
-                    const center = turf.centroid(feature);
-                    if (!turf.booleanPointInPolygon(center, germany)) return;
+                const heavyBuffers = rawCenterData
+                    .filter(c => c.buType === 'Heavy' || c.buType === 'Mixed')
+                    .map(c => turf.buffer(turf.point([c.lng, c.lat]), 50, {units:'kilometers', steps:24}));
 
-                    const [lng, lat] = center.geometry.coordinates;
-                    const state = getCoverageState(lat, lng);
-                    if (state.status !== 'Vollausgestattet') groups[state.status].push(feature);
-                });
+                setStatus(`🗺️ Vereinige ${lightBuffers.length} Light- und ${heavyBuffers.length} Heavy-Abdeckungen…`);
 
-                Object.entries(groups).forEach(([status, features]) => {
-                    if (!features.length) return;
+                const lightCoverage = unionFeatures(lightBuffers);
+                const heavyCoverage = unionFeatures(heavyBuffers);
 
-                    const color = status === 'Beide Bedarfe'
-                        ? '#ef4444'
-                        : status === 'LKW/Heavy Bedarf' ? '#f97316' : '#3b82f6';
+                // Fehlende Versorgung = Deutschland MINUS jeweilige 50-km-Abdeckung.
+                const lightMissingAll = geoDifference(germany, lightCoverage);
+                const heavyMissingAll = geoDifference(germany, heavyCoverage);
 
-                    const layer = L.geoJSON({type:'FeatureCollection', features}, {
-                        style: {
-                            color,
-                            weight: 0,
-                            opacity: 0,
-                            fillColor: color,
-                            fillOpacity: status === 'Beide Bedarfe' ? 0.24 : 0.20
-                        },
-                        interactive: true,
-                        onEachFeature: function(feature, poly) {
-                            poly.on('add', function() {
-                                ensureHatchPatterns();
-                                if (poly._path) poly._path.setAttribute('fill', patternForStatus(status));
-                            });
+                // Rot: beides fehlt.
+                const bothMissing = geoIntersect(lightMissingAll, heavyMissingAll);
 
-                            poly.on('click', function(e) {
-                                const state = getCoverageState(e.latlng.lat, e.latlng.lng);
-                                const nearby = state.nearby.sort((a,b)=>a.distance-b.distance).slice(0,10);
-                                const list = nearby.map(n =>
-                                    `<div style="font-size:11px;padding:3px 0;border-bottom:1px dashed #ddd"><b>${n.ort || n.plz || n.kst}</b> – ${n.buType} (${n.distance.toFixed(1)} km)</div>`
-                                ).join('');
-                                const title = state.status === 'Beide Bedarfe' ? 'Light + Heavy Bedarf'
-                                    : state.status === 'LKW/Heavy Bedarf' ? 'Heavy-Bedarf' : 'Light-Bedarf';
-                                const reason = state.status === 'Beide Bedarfe'
-                                    ? 'Innerhalb von 50 km gibt es weder Light-/Mixed- noch Heavy-/Mixed-Abdeckung.'
-                                    : state.status === 'LKW/Heavy Bedarf'
-                                        ? 'Light ist innerhalb von 50 km abgedeckt, Heavy/Mixed fehlt.'
-                                        : 'Heavy ist innerhalb von 50 km abgedeckt, Light/Mixed fehlt.';
+                // Orange/Blau exklusiv, damit sich die Farben nicht überlagern.
+                const heavyOnlyMissing = geoDifference(heavyMissingAll, bothMissing);
+                const lightOnlyMissing = geoDifference(lightMissingAll, bothMissing);
 
-                                L.popup().setLatLng(e.latlng).setContent(
-                                    `<div class="popup-header"><h4>${title}</h4><p>50-km-Versorgungsanalyse</p></div>
-                                     <div class="popup-body">
-                                       <span class="badge" style="background:${color}">${state.status}</span>
-                                       <div class="radius-info-box">${reason}</div>
-                                       <div class="section-title">Center im 50-km-Umkreis (${state.nearby.length})</div>
-                                       ${list || '<b>Keine Center im 50-km-Umkreis.</b>'}
-                                     </div>`
-                                ).openOn(map);
-                                L.DomEvent.stopPropagation(e);
-                            });
-                        }
-                    }).addTo(map);
-
-                    demandAreas.push({layer, status});
-                });
+                addDemandPolygon(bothMissing, 'Beide Bedarfe');
+                addDemandPolygon(heavyOnlyMissing, 'LKW/Heavy Bedarf');
+                addDemandPolygon(lightOnlyMissing, 'PKW/Light Bedarf');
 
                 filterMap();
-                const totalCells = Object.values(groups).reduce((n,a)=>n+a.length,0);
-                setStatus(`✅ <b>${rawCenterData.length} Center geladen</b> · ${totalCells} Bedarfszellen · 50-km-Flächenanalyse aktiv`);
+                setStatus(`✅ <b>${rawCenterData.length} Center geladen</b> · echte 50-km-Versorgungsflächen aktiv`);
             } catch (e) {
                 console.error(e);
-                setStatus(`⚠️ Bedarfsflächen konnten nicht geladen werden: ${e.message}. Center bleiben sichtbar.`);
+                setStatus(`⚠️ Bedarfsflächen konnten nicht berechnet werden: ${e.message}. Center bleiben sichtbar.`);
             }
         }
 
@@ -416,10 +459,11 @@
         }
 
         function addCenterMarker(c) {
-            let color = '#10b981'; 
-            if (c.bedarf === 'LKW/Heavy Bedarf') color = '#f97316';
-            else if (c.bedarf === 'PKW/Light Bedarf') color = '#3b82f6';
-            else if (c.bedarf === 'Beide Bedarfe') color = '#ef4444'; 
+            // Punktfarbe zeigt ausschließlich den BU-Typ des Centers.
+            let color = '#64748b';
+            if (c.buType === 'Mixed') color = '#10b981';
+            else if (c.buType === 'Light') color = '#3b82f6';
+            else if (c.buType === 'Heavy') color = '#f97316';
 
             const marker = L.circleMarker([c.lat, c.lng], {
                 radius: 8,
