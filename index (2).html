@@ -48,6 +48,10 @@
         .dot-nur-heavy { background-color: #f97316; }
         .dot-kein-heavy { background-color: #3b82f6; }
         .dot-kein-bedarf { background-color: #10b981; }
+        .hatch-swatch { width: 22px; height: 14px; display:inline-block; margin-right:8px; border:1px solid #94a3b8; border-radius:2px; }
+        .hatch-heavy { background: repeating-linear-gradient(45deg, rgba(249,115,22,.18) 0 4px, #f97316 4px 6px); }
+        .hatch-light { background: repeating-linear-gradient(-45deg, rgba(59,130,246,.16) 0 4px, #3b82f6 4px 6px); }
+        .legend-note { font-size:11px; color:#64748b; line-height:1.45; margin:8px 0 10px; padding:8px; background:#f8fafc; border-radius:7px; }
 
         .status-box {
             position: absolute; bottom: 20px; left: 20px; z-index: 1000;
@@ -92,14 +96,15 @@
         <input type="text" id="searchInput" class="search-box" placeholder="PLZ, Ort oder Netzkennung eingeben..." onkeyup="handleSearchInput()">
 
         <div class="filter-group">
-            <label><input type="checkbox" value="LKW/Heavy Bedarf" checked onchange="filterMap()"> <span class="dot dot-nur-heavy"></span> LKW / Heavy-Erweiterungsbedarf</label>
+            <label><input type="checkbox" value="LKW/Heavy Bedarf" checked onchange="filterMap()"> <span class="hatch-swatch hatch-heavy"></span> Heavy-Bedarfsgebiete</label>
         </div>
         <div class="filter-group">
-            <label><input type="checkbox" value="PKW/Light Bedarf" checked onchange="filterMap()"> <span class="dot dot-kein-heavy"></span> PKW / Light-Erweiterungsbedarf</label>
+            <label><input type="checkbox" value="PKW/Light Bedarf" checked onchange="filterMap()"> <span class="hatch-swatch hatch-light"></span> Light-Bedarfsgebiete</label>
         </div>
         <div class="filter-group">
-            <label><input type="checkbox" value="Vollausgestattet" checked onchange="filterMap()"> <span class="dot dot-kein-bedarf"></span> Vollausgestattet (Full-Service)</label>
+            <label><input type="checkbox" value="Kein Bedarf" checked onchange="filterMap()"> <span class="dot dot-kein-bedarf"></span> Regional abgedeckt</label>
         </div>
+        <div class="legend-note"><b>Logik über BU + 50 km:</b><br>Light benötigt Heavy, sofern kein Heavy/Mixed im Radius liegt. Heavy benötigt Light, sofern kein Light/Mixed im Radius liegt. Mixed deckt beide Bereiche ab.</div>
         
         <div style="font-size: 11px; color: #64748b; margin-top: 8px; border-top: 1px solid #eee; padding-top: 8px;">
             📍 <b>Tipp:</b> Gib eine PLZ ein (z. B. 60318) für den automatischen <b>50 km Radius-Check</b>!
@@ -115,6 +120,7 @@
     <script>
         let map;
         let allMarkers = [];
+        let demandAreas = [];
         let rawCenterData = [];
         let radiusCircle = null;
         let activeRadiusCoords = null; // Speichert aktuelle 50km-Mittelpunktkoordinaten
@@ -191,23 +197,16 @@
                 if (!isNaN(lat) && !isNaN(lng)) {
                     let isYes = (v) => v && ['ja','1','x','true'].includes(v.toLowerCase());
 
-                    let hasPkwReifen = isYes(row['Reifenservice']) || isYes(row['PKW']);
-                    let hasPkwAuto = isYes(row['Autoservice']);
-                    let hasLkwReifen = isYes(row['Rad- Reifen Service\n(LKW)']) || isYes(row['LKW']);
-                    let hasLkwAuto = isYes(row['Autoservice (LKW)']);
-                    let hasLkwBuehne = isYes(row['Hebebühne vorhanden\n(LKW)']);
+                    // BU ist die führende Logik für Light / Heavy / Mixed.
+                    const buRaw = (row['BU'] || '').trim();
+                    const buNorm = buRaw.toLowerCase();
+                    let buType = 'Unknown';
+                    if (buNorm.includes('mixed') || (buNorm.includes('light') && buNorm.includes('heavy'))) buType = 'Mixed';
+                    else if (buNorm.includes('heavy') || buNorm.includes('lkw')) buType = 'Heavy';
+                    else if (buNorm.includes('light') || buNorm.includes('pkw')) buType = 'Light';
 
-                    let hasFullPkw = hasPkwReifen || hasPkwAuto;
-                    let hasFullLkw = hasLkwReifen && (hasLkwAuto || hasLkwBuehne);
-
-                    let bedarf = 'LKW/Heavy Bedarf';
-                    if (hasFullPkw && hasFullLkw) {
-                        bedarf = 'Vollausgestattet';
-                    } else if (hasFullPkw && !hasFullLkw) {
-                        bedarf = 'LKW/Heavy Bedarf';
-                    } else if (!hasFullPkw && hasFullLkw) {
-                        bedarf = 'PKW/Light Bedarf';
-                    }
+                    // Die finale Bedarfsklasse wird nach dem Einlesen anhand aller Center im 50-km-Umkreis berechnet.
+                    let bedarf = 'Kein Bedarf';
 
                     rawCenterData.push({
                         kst: row['KST'] || '',
@@ -218,30 +217,27 @@
                         ort: row['Ort'] || '',
                         lat: lat,
                         lng: lng,
-                        bu: row['BU'] || '',
+                        bu: buRaw,
+                        buType: buType,
                         bedarf: bedarf,
                         region: row['Region'] || '',
                         buehnen: row['Anzahl Hebebühnen'] || '0',
                         buehnen_35t: row['Anzahl Hebebühnen > 3,5T'] || '0',
                         tel: `${row['Tel. (Vor)'] || ''} ${row['Tel. (Ruf)'] || ''}`.trim(),
-                        hasFullPkw: hasFullPkw,
-                        hasFullLkw: hasFullLkw,
+                        hasFullPkw: buType === 'Light' || buType === 'Mixed',
+                        hasFullLkw: buType === 'Heavy' || buType === 'Mixed',
                         services: {
-                            'Autoservice PKW': hasPkwAuto,
-                            'Reifenservice PKW': hasPkwReifen,
-                            'Autoglas': isYes(row['Autoglas']),
-                            'Hochvolt / EV': isYes(row['EV / Hochvolt']),
-                            'LKW Reifenservice': hasLkwReifen,
-                            'LKW Autoservice': hasLkwAuto,
-                            'LKW Hebebühne': hasLkwBuehne,
-                            'Mobiler Service': isYes(row['Breakdown Service'])
+                            'Light / PKW laut BU': buType === 'Light' || buType === 'Mixed',
+                            'Heavy / LKW laut BU': buType === 'Heavy' || buType === 'Mixed'
                         }
+
                     });
                 }
             });
 
             const parsedCount = rawCenterData.length;
             if (parsedCount > 0) {
+                calculateNetworkDemand();
                 loadCenterData(rawCenterData);
                 setStatus(`✅ <b>${parsedCount} Franchisepartner geladen!</b>`);
             } else {
@@ -249,15 +245,76 @@
             }
         }
 
+        function calculateNetworkDemand() {
+            rawCenterData.forEach(c => {
+                const nearby = rawCenterData.filter(other =>
+                    getDistanceKm(c.lat, c.lng, other.lat, other.lng) <= 50
+                );
+                const hasLightCoverage = nearby.some(n => n.buType === 'Light' || n.buType === 'Mixed');
+                const hasHeavyCoverage = nearby.some(n => n.buType === 'Heavy' || n.buType === 'Mixed');
+
+                c.nearbyCenters = nearby;
+                c.hasFullPkw = hasLightCoverage;
+                c.hasFullLkw = hasHeavyCoverage;
+
+                if (!hasHeavyCoverage && hasLightCoverage) c.bedarf = 'LKW/Heavy Bedarf';
+                else if (!hasLightCoverage && hasHeavyCoverage) c.bedarf = 'PKW/Light Bedarf';
+                else if (!hasLightCoverage && !hasHeavyCoverage) c.bedarf = 'Beide Bedarfe';
+                else c.bedarf = 'Kein Bedarf';
+            });
+        }
+
+        function ensureHatchPatterns() {
+            const svg = document.querySelector('.leaflet-overlay-pane svg');
+            if (!svg || svg.querySelector('#heavyHatch')) return;
+            const ns = 'http://www.w3.org/2000/svg';
+            const defs = document.createElementNS(ns, 'defs');
+            defs.innerHTML = `
+                <pattern id="heavyHatch" patternUnits="userSpaceOnUse" width="10" height="10" patternTransform="rotate(45)">
+                    <rect width="10" height="10" fill="#f97316" fill-opacity="0.10"></rect>
+                    <line x1="0" y1="0" x2="0" y2="10" stroke="#f97316" stroke-width="3" stroke-opacity="0.72"></line>
+                </pattern>
+                <pattern id="lightHatch" patternUnits="userSpaceOnUse" width="10" height="10" patternTransform="rotate(-45)">
+                    <rect width="10" height="10" fill="#3b82f6" fill-opacity="0.08"></rect>
+                    <line x1="0" y1="0" x2="0" y2="10" stroke="#3b82f6" stroke-width="3" stroke-opacity="0.68"></line>
+                </pattern>`;
+            svg.insertBefore(defs, svg.firstChild);
+        }
+
+        function addDemandArea(c, type) {
+            const isHeavy = type === 'LKW/Heavy Bedarf';
+            const color = isHeavy ? '#f97316' : '#3b82f6';
+            const circle = L.circle([c.lat, c.lng], {
+                radius: 50000, color, weight: 1.5, opacity: 0.75,
+                fillColor: color, fillOpacity: 0.10, interactive: true
+            }).addTo(map);
+            ensureHatchPatterns();
+            if (circle._path) circle._path.setAttribute('fill', isHeavy ? 'url(#heavyHatch)' : 'url(#lightHatch)');
+
+            const nearby = (c.nearbyCenters || []).slice().sort((a,b) =>
+                getDistanceKm(c.lat,c.lng,a.lat,a.lng)-getDistanceKm(c.lat,c.lng,b.lat,b.lng)
+            );
+            const rows = nearby.map(n => {
+                const d = getDistanceKm(c.lat,c.lng,n.lat,n.lng).toFixed(1);
+                return `<div style="font-size:11px;padding:3px 0;border-bottom:1px dashed #ddd"><b>${n.ort || n.plz}</b> – ${n.buType} (${d} km)</div>`;
+            }).join('');
+            circle.bindPopup(`<div class="popup-header"><h4>${isHeavy ? 'Heavy' : 'Light'}-Bedarfsgebiet</h4><p>50-km-Netzwerkprüfung um ${c.ort || c.plz}</p></div><div class="popup-body"><span class="badge" style="background:${color}">${type}</span><div class="radius-info-box"><b>BU des Ausgangscenters:</b> ${c.buType}<br>${isHeavy ? 'Im 50-km-Radius befindet sich kein Heavy- oder Mixed-Center.' : 'Im 50-km-Radius befindet sich kein Light- oder Mixed-Center.'}</div><div class="section-title">Berücksichtigte Center</div>${rows || 'Keine Center im Radius.'}</div>`);
+            demandAreas.push({ layer: circle, status: type });
+        }
+
         function loadCenterData(dataArray) {
             allMarkers.forEach(item => map.removeLayer(item.marker));
+            demandAreas.forEach(item => map.removeLayer(item.layer));
             allMarkers = [];
+            demandAreas = [];
 
             let count = 0;
             dataArray.forEach(center => {
                 if (center.lat && center.lng && !isNaN(center.lat) && !isNaN(center.lng)) {
                     count++;
                     addCenterMarker(center);
+                    if (center.bedarf === 'LKW/Heavy Bedarf' || center.bedarf === 'Beide Bedarfe') addDemandArea(center, 'LKW/Heavy Bedarf');
+                    if (center.bedarf === 'PKW/Light Bedarf' || center.bedarf === 'Beide Bedarfe') addDemandArea(center, 'PKW/Light Bedarf');
                 }
             });
 
@@ -267,8 +324,9 @@
 
         function addCenterMarker(c) {
             let color = '#10b981'; 
-            if (c.bedarf === 'LKW/Heavy Bedarf') color = '#f97316'; 
-            else if (c.bedarf === 'PKW/Light Bedarf') color = '#3b82f6'; 
+            if (c.bedarf === 'LKW/Heavy Bedarf') color = '#f97316';
+            else if (c.bedarf === 'PKW/Light Bedarf') color = '#3b82f6';
+            else if (c.bedarf === 'Beide Bedarfe') color = '#ef4444'; 
 
             const marker = L.circleMarker([c.lat, c.lng], {
                 radius: 8,
@@ -365,8 +423,8 @@
                 let dist = getDistanceKm(clickLat, clickLng, c.lat, c.lng);
                 if (dist <= 50) {
                     nearbyCentersAll.push({ ...c, distance: dist });
-                    if (c.hasFullLkw) hasLkwFullService = true;
-                    if (c.hasFullPkw) hasPkwFullService = true;
+                    if (c.buType === 'Heavy' || c.buType === 'Mixed') hasLkwFullService = true;
+                    if (c.buType === 'Light' || c.buType === 'Mixed') hasPkwFullService = true;
                 }
             });
 
@@ -391,7 +449,7 @@
             nearbyCentersAll.sort((a,b) => a.distance - b.distance).forEach(nc => {
                 centerListHtml += `
                     <div style="font-size:11px; margin-bottom:4px; padding-bottom:4px; border-bottom:1px dashed #ddd;">
-                        <b>${nc.ort}</b> (${nc.distance.toFixed(1)} km) - <i>${nc.bedarf}</i>
+                        <b>${nc.ort}</b> (${nc.distance.toFixed(1)} km) - <i>BU: ${nc.buType}</i>
                     </div>
                 `;
             });
@@ -477,8 +535,19 @@
             let visibleCount = 0;
             let radiusFilteredCount = 0;
 
+            demandAreas.forEach(item => {
+                const show = activeFilters.includes(item.status);
+                if (show) map.addLayer(item.layer); else map.removeLayer(item.layer);
+                if (show && item.layer._path) {
+                    ensureHatchPatterns();
+                    item.layer._path.setAttribute('fill', item.status === 'LKW/Heavy Bedarf' ? 'url(#heavyHatch)' : 'url(#lightHatch)');
+                }
+            });
+
             allMarkers.forEach(item => {
-                const matchesFilter = activeFilters.includes(item.status);
+                const matchesFilter = item.status === 'Beide Bedarfe'
+                    ? (activeFilters.includes('LKW/Heavy Bedarf') || activeFilters.includes('PKW/Light Bedarf'))
+                    : activeFilters.includes(item.status);
 
                 if (matchesFilter) {
                     map.addLayer(item.marker);
