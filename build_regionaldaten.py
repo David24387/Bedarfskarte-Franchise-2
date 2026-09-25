@@ -29,10 +29,10 @@ def index_catalog(cat):
     walk(cat)
     return out
 
-def latest(item):
+def available_years(item):
     ys=[int(y) for y in (item.get("years") or {}) if str(y).isdigit()]
     if not ys: raise RuntimeError("Keine Jahre: "+str(item.get("code")))
-    return max(ys)
+    return sorted(ys,reverse=True)
 
 def attr_ci(attrs, name):
     target=name.lower()
@@ -73,6 +73,18 @@ def query_metric(code,field,year):
     print(f"{code} {year}: {len(features)} Features, {len(out)} verwertbare AGS")
     return out
 
+def newest_data(code,field,item):
+    tried=[]
+    for year in available_years(item):
+        tried.append(year)
+        data=query_metric(code,field,year)
+        if data:
+            if year != tried[0]:
+                print(f"{code}: Katalogjahr {tried[0]} ohne Daten; verwende {year}")
+            return year,data
+        time.sleep(.2)
+    raise RuntimeError(f"Keine Regionalatlas-Daten für {code}; getestete Jahre: {tried}")
+
 def pct(vals,v):
     a=sorted(x for x in vals if isinstance(x,(int,float)) and math.isfinite(x))
     return sum(x<=v for x in a)/len(a) if a else None
@@ -89,9 +101,8 @@ def main():
     for key,m in METRICS.items():
         item=cat.get(m["code"])
         if not item: raise RuntimeError("Fehlt im Katalog: "+m["code"])
-        year=latest(item); years[key]=year
-        data=query_metric(m["code"],m["field"],year)
-        if not data: raise RuntimeError(f"Keine Regionalatlas-Daten für {m['code']} / {year}")
+        year,data=newest_data(m["code"],m["field"],item)
+        years[key]=year
         for ags,d in data.items():
             rows.setdefault(ags,{"ags":ags,"name":d["name"]})
             if d["name"] and not rows[ags].get("name"): rows[ags]["name"]=d["name"]
