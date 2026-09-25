@@ -1,0 +1,509 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Franchise Bedarfs- & Potenzialanalyse Deutschland</title>
+
+    <!-- Leaflet CSS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="" />
+
+    <style>
+        * { box-sizing: border-box; }
+        html, body { 
+            margin: 0; padding: 0; height: 100%; width: 100%; 
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; 
+            overflow: hidden; background-color: #f8f9fa; 
+        }
+        #map { height: 100vh; width: 100vw; z-index: 1; cursor: crosshair; }
+        
+        .filter-container {
+            position: absolute; top: 20px; right: 20px; z-index: 1000;
+            background: rgba(255, 255, 255, 0.98); backdrop-filter: blur(8px);
+            padding: 18px 22px; border-radius: 12px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.18);
+            width: 340px; border: 1px solid rgba(0,0,0,0.08);
+            max-height: 88vh; overflow-y: auto;
+        }
+        .filter-container h3 { 
+            margin: 0 0 12px 0; font-size: 16px; color: #1e293b; font-weight: 700; 
+            border-bottom: 2px solid #e2e8f0; padding-bottom: 8px; 
+            display: flex; justify-content: space-between; align-items: center; 
+        }
+        .search-box { 
+            width: 100%; padding: 10px 12px; border: 1px solid #cbd5e1; 
+            border-radius: 8px; margin-bottom: 12px; font-size: 13px; outline: none;
+            transition: border-color 0.2s, box-shadow 0.2s;
+        }
+        .search-box:focus {
+            border-color: #3b82f6;
+            box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.15);
+        }
+        .filter-group { margin-bottom: 10px; display: flex; align-items: center; }
+        .filter-group label { font-size: 13px; cursor: pointer; color: #334155; display: flex; align-items: center; user-select: none; font-weight: 500; }
+        .filter-group input { margin-right: 10px; cursor: pointer; width: 16px; height: 16px; }
+        
+        .dot { height: 12px; width: 12px; border-radius: 50%; display: inline-block; margin-right: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.15); }
+        .dot-generell { background-color: #ef4444; }
+        .dot-nur-heavy { background-color: #f97316; }
+        .dot-kein-heavy { background-color: #3b82f6; }
+        .dot-kein-bedarf { background-color: #10b981; }
+
+        .status-box {
+            position: absolute; bottom: 20px; left: 20px; z-index: 1000;
+            background: #0f172a; color: #f8fafc; padding: 10px 14px; border-radius: 8px;
+            font-size: 12px; font-family: monospace; box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+        }
+
+        .leaflet-popup-content-wrapper { border-radius: 12px; padding: 0; overflow: hidden; box-shadow: 0 12px 28px rgba(0,0,0,0.22); width: 360px !important; }
+        .leaflet-popup-content { margin: 0 !important; width: 360px !important; line-height: 1.4; }
+        .popup-header { padding: 14px 16px; color: white; background: #1e293b; }
+        .popup-header h4 { margin: 0 0 4px 0; font-size: 16px; font-weight: 700; }
+        .popup-header p { margin: 0; font-size: 12px; opacity: 0.85; }
+        .popup-body { padding: 14px 16px; max-height: 380px; overflow-y: auto; }
+        
+        .badge { display: inline-block; padding: 4px 10px; border-radius: 20px; font-size: 11px; font-weight: 700; text-transform: uppercase; margin-bottom: 12px; color: white; }
+        
+        .section-title { font-size: 11px; font-weight: 700; color: #64748b; text-transform: uppercase; letter-spacing: 0.5px; margin: 12px 0 6px 0; border-bottom: 1px solid #e2e8f0; padding-bottom: 3px; }
+        .service-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; font-size: 12px; }
+        .service-item { display: flex; align-items: center; padding: 4px 6px; border-radius: 4px; }
+        .service-item.missing { background: #fef2f2; color: #991b1b; border: 1px solid #fecaca; }
+        .service-item.available { background: #f0fdf4; color: #166534; border: 1px solid #bbf7d0; }
+        .service-icon { margin-right: 6px; font-size: 13px; font-weight: bold; }
+
+        .stat-row { display: flex; justify-content: space-between; font-size: 12px; margin-bottom: 4px; }
+        .stat-label { color: #64748b; }
+        .stat-val { font-weight: 600; color: #0f172a; }
+        .status-pill { background: #e2e8f0; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 600; }
+
+        .radius-info-box {
+            background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 10px; margin-top: 8px; font-size: 12px;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="filter-container">
+        <h3>
+            <span>Bedarfs-Filter</span>
+            <span id="counter" style="font-size: 12px; font-weight: normal; color: #64748b;">Lädt...</span>
+        </h3>
+        
+        <input type="text" id="searchInput" class="search-box" placeholder="PLZ, Ort oder Netzkennung eingeben..." onkeyup="handleSearchInput()">
+
+        <div class="filter-group">
+            <label><input type="checkbox" value="LKW/Heavy Bedarf" checked onchange="filterMap()"> <span class="dot dot-nur-heavy"></span> LKW / Heavy-Erweiterungsbedarf</label>
+        </div>
+        <div class="filter-group">
+            <label><input type="checkbox" value="PKW/Light Bedarf" checked onchange="filterMap()"> <span class="dot dot-kein-heavy"></span> PKW / Light-Erweiterungsbedarf</label>
+        </div>
+        <div class="filter-group">
+            <label><input type="checkbox" value="Vollausgestattet" checked onchange="filterMap()"> <span class="dot dot-kein-bedarf"></span> Vollausgestattet (Full-Service)</label>
+        </div>
+        
+        <div style="font-size: 11px; color: #64748b; margin-top: 8px; border-top: 1px solid #eee; padding-top: 8px;">
+            📍 <b>Tipp:</b> Gib eine PLZ ein (z. B. 60318) für den automatischen <b>50 km Radius-Check</b>!
+        </div>
+    </div>
+
+    <div class="status-box" id="statusBox">Initialisiere Karte...</div>
+    <div id="map"></div>
+
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.3.2/papaparse.min.js"></script>
+    
+    <script>
+        let map;
+        let allMarkers = [];
+        let rawCenterData = [];
+        let radiusCircle = null;
+        let activeRadiusCoords = null; // Speichert aktuelle 50km-Mittelpunktkoordinaten
+        let searchTimeout = null;
+
+        function setStatus(msg) {
+            document.getElementById('statusBox').innerHTML = msg;
+        }
+
+        function initMap() {
+            map = L.map('map', { zoomControl: true }).setView([51.1657, 10.4515], 6);
+
+            L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                attribution: '&copy; OpenStreetMap contributors',
+                maxZoom: 19
+            }).addTo(map);
+
+            map.on('click', function(e) {
+                analyzeRadius(e.latlng.lat, e.latlng.lng);
+            });
+
+            loadCsvData();
+        }
+
+        function loadCsvData() {
+            Papa.parse('./daten.csv', {
+                download: true,
+                header: false,
+                skipEmptyLines: true,
+                complete: function(results) {
+                    if (results.data && results.data.length > 1) {
+                        parseRawCsvMatrix(results.data);
+                    } else {
+                        setStatus("⚠️ daten.csv ist leer oder konnte nicht gelesen werden.");
+                    }
+                },
+                error: function(err) {
+                    setStatus("❌ daten.csv konnte nicht geladen werden. Prüfe, ob die Datei im selben GitHub-Pages-Ordner wie index.html liegt.");
+                }
+            });
+        }
+
+        function parseRawCsvMatrix(matrix) {
+            let headerIdx = -1;
+            for (let i = 0; i < Math.min(10, matrix.length); i++) {
+                if (matrix[i]) {
+                    let lineStr = matrix[i].join(' ').toLowerCase();
+                    if (lineStr.includes('kst') || lineStr.includes('ort') || lineStr.includes('plz')) {
+                        headerIdx = i;
+                        break;
+                    }
+                }
+            }
+
+            if (headerIdx === -1) headerIdx = 0;
+
+            const headers = matrix[headerIdx].map(h => h ? h.toString().trim() : '');
+            const dataRows = matrix.slice(headerIdx + 1);
+
+            rawCenterData = [];
+
+            dataRows.forEach(rowArr => {
+                let row = {};
+                headers.forEach((h, idx) => {
+                    if (h) row[h] = rowArr[idx] !== undefined && rowArr[idx] !== null ? rowArr[idx].toString().trim() : '';
+                });
+
+                let latStr = row['Lat.'] || row['Lat'] || '';
+                let lngStr = row['Long.'] || row['Long'] || '';
+                
+                let lat = parseFloat(latStr.replace(',', '.'));
+                let lng = parseFloat(lngStr.replace(',', '.'));
+
+                if (!isNaN(lat) && !isNaN(lng)) {
+                    let isYes = (v) => v && ['ja','1','x','true'].includes(v.toLowerCase());
+
+                    let hasPkwReifen = isYes(row['Reifenservice']) || isYes(row['PKW']);
+                    let hasPkwAuto = isYes(row['Autoservice']);
+                    let hasLkwReifen = isYes(row['Rad- Reifen Service\n(LKW)']) || isYes(row['LKW']);
+                    let hasLkwAuto = isYes(row['Autoservice (LKW)']);
+                    let hasLkwBuehne = isYes(row['Hebebühne vorhanden\n(LKW)']);
+
+                    let hasFullPkw = hasPkwReifen || hasPkwAuto;
+                    let hasFullLkw = hasLkwReifen && (hasLkwAuto || hasLkwBuehne);
+
+                    let bedarf = 'LKW/Heavy Bedarf';
+                    if (hasFullPkw && hasFullLkw) {
+                        bedarf = 'Vollausgestattet';
+                    } else if (hasFullPkw && !hasFullLkw) {
+                        bedarf = 'LKW/Heavy Bedarf';
+                    } else if (!hasFullPkw && hasFullLkw) {
+                        bedarf = 'PKW/Light Bedarf';
+                    }
+
+                    rawCenterData.push({
+                        kst: row['KST'] || '',
+                        netzkennung: row['Netzkennung'] || '',
+                        gesellschaft: row['Gesellschaft'] || '',
+                        strasse: row['Straße'] || row['Strasse'] || '',
+                        plz: row['PLZ'] || '',
+                        ort: row['Ort'] || '',
+                        lat: lat,
+                        lng: lng,
+                        bu: row['BU'] || '',
+                        bedarf: bedarf,
+                        region: row['Region'] || '',
+                        buehnen: row['Anzahl Hebebühnen'] || '0',
+                        buehnen_35t: row['Anzahl Hebebühnen > 3,5T'] || '0',
+                        tel: `${row['Tel. (Vor)'] || ''} ${row['Tel. (Ruf)'] || ''}`.trim(),
+                        hasFullPkw: hasFullPkw,
+                        hasFullLkw: hasFullLkw,
+                        services: {
+                            'Autoservice PKW': hasPkwAuto,
+                            'Reifenservice PKW': hasPkwReifen,
+                            'Autoglas': isYes(row['Autoglas']),
+                            'Hochvolt / EV': isYes(row['EV / Hochvolt']),
+                            'LKW Reifenservice': hasLkwReifen,
+                            'LKW Autoservice': hasLkwAuto,
+                            'LKW Hebebühne': hasLkwBuehne,
+                            'Mobiler Service': isYes(row['Breakdown Service'])
+                        }
+                    });
+                }
+            });
+
+            const parsedCount = rawCenterData.length;
+            if (parsedCount > 0) {
+                loadCenterData(rawCenterData);
+                setStatus(`✅ <b>${parsedCount} Franchisepartner geladen!</b>`);
+            } else {
+                setStatus("⚠️ Keine Standorte mit gültigen Koordinaten gefunden.");
+            }
+        }
+
+        function loadCenterData(dataArray) {
+            allMarkers.forEach(item => map.removeLayer(item.marker));
+            allMarkers = [];
+
+            let count = 0;
+            dataArray.forEach(center => {
+                if (center.lat && center.lng && !isNaN(center.lat) && !isNaN(center.lng)) {
+                    count++;
+                    addCenterMarker(center);
+                }
+            });
+
+            document.getElementById('counter').innerText = `${count} Standorte`;
+            filterMap();
+        }
+
+        function addCenterMarker(c) {
+            let color = '#10b981'; 
+            if (c.bedarf === 'LKW/Heavy Bedarf') color = '#f97316'; 
+            else if (c.bedarf === 'PKW/Light Bedarf') color = '#3b82f6'; 
+
+            const marker = L.circleMarker([c.lat, c.lng], {
+                radius: 8,
+                fillColor: color,
+                color: "#ffffff",
+                weight: 2,
+                opacity: 1,
+                fillOpacity: 0.88,
+                pane: 'markerPane'
+            });
+
+            let serviceHTML = '';
+            if (c.services) {
+                for (let [name, active] of Object.entries(c.services)) {
+                    const statusClass = active ? 'available' : 'missing';
+                    const icon = active ? '✓' : '✗';
+                    serviceHTML += `<div class="service-item ${statusClass}"><span class="service-icon">${icon}</span>${name}</div>`;
+                }
+            }
+
+            const popupContent = `
+                <div class="popup-header">
+                    <h4>${c.ort || 'Standort'} ${c.plz ? '(' + c.plz + ')' : ''}</h4>
+                    <p>${c.gesellschaft || c.strasse || 'Euromaster Partner'}</p>
+                </div>
+                <div class="popup-body">
+                    <span class="badge" style="background-color: ${color};">${c.bedarf}</span>
+                    
+                    <div class="stat-row"><span class="stat-label">Netzwerk-Typ:</span><span class="stat-val"><span class="status-pill">${c.bu || 'Franchise'}</span></span></div>
+                    <div class="stat-row"><span class="stat-label">Netzkennung / KST:</span><span class="stat-val">${c.netzkennung || c.kst || 'N/A'}</span></div>
+                    <div class="stat-row"><span class="stat-label">Straße:</span><span class="stat-val">${c.strasse || 'N/A'}</span></div>
+                    <div class="stat-row"><span class="stat-label">Region:</span><span class="stat-val">${c.region || 'N/A'}</span></div>
+
+                    <div class="section-title">Vorhandene Leistungen vs. Lücken</div>
+                    <div class="service-grid">
+                        ${serviceHTML}
+                    </div>
+
+                    <div class="section-title" style="margin-top:10px;">Ausstattung</div>
+                    <div class="stat-row"><span class="stat-label">Anzahl Hebebühnen:</span><span class="stat-val">${c.buehnen || '0'}</span></div>
+                    <div class="stat-row"><span class="stat-label">Bühnen >3.5t (LLKW):</span><span class="stat-val">${c.buehnen_35t || '0'}</span></div>
+                </div>
+            `;
+
+            marker.bindPopup(popupContent);
+
+            allMarkers.push({
+                marker: marker,
+                status: c.bedarf,
+                lat: c.lat,
+                lng: c.lng,
+                plz: c.plz,
+                ort: c.ort,
+                hasFullLkw: c.hasFullLkw,
+                hasFullPkw: c.hasFullPkw,
+                text: `${c.ort} ${c.plz} ${c.netzkennung} ${c.kst} ${c.strasse} ${c.gesellschaft} ${c.region}`.toLowerCase()
+            });
+
+            marker.addTo(map);
+        }
+
+        function getDistanceKm(lat1, lon1, lat2, lon2) {
+            const R = 6371;
+            const dLat = (lat2 - lat1) * Math.PI / 180;
+            const dLon = (lon2 - lon1) * Math.PI / 180;
+            const a = 
+                Math.sin(dLat/2) * Math.sin(dLat/2) +
+                Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * 
+                Math.sin(dLon/2) * Math.sin(dLon/2);
+            const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+            return R * c;
+        }
+
+        function analyzeRadius(clickLat, clickLng, customTitle) {
+            activeRadiusCoords = { lat: clickLat, lng: clickLng };
+
+            if (radiusCircle) {
+                map.removeLayer(radiusCircle);
+            }
+
+            radiusCircle = L.circle([clickLat, clickLng], {
+                color: '#ef4444',
+                fillColor: '#ef4444',
+                fillOpacity: 0.12,
+                radius: 50000 
+            }).addTo(map);
+
+            // Auswertung aller Center im Radius
+            let nearbyCentersAll = [];
+            let hasLkwFullService = false;
+            let hasPkwFullService = false;
+
+            rawCenterData.forEach(c => {
+                let dist = getDistanceKm(clickLat, clickLng, c.lat, c.lng);
+                if (dist <= 50) {
+                    nearbyCentersAll.push({ ...c, distance: dist });
+                    if (c.hasFullLkw) hasLkwFullService = true;
+                    if (c.hasFullPkw) hasPkwFullService = true;
+                }
+            });
+
+            let bedarfHeadline = "";
+            let badgeColor = "#ef4444";
+
+            if (nearbyCentersAll.length === 0) {
+                bedarfHeadline = "🚨 <b>GENERELLER BEDARF (Weißer Fleck)!</b><br>Kein Franchise-Partner im 50-km Radius. Hier wird ein neuer Partner gesucht!";
+                badgeColor = "#ef4444"; 
+            } else if (!hasLkwFullService) {
+                bedarfHeadline = "🟧 <b>LKW / HEAVY ERWEITERUNGSBEDARF:</b><br>Kein vollwertiger LKW-Service (Reifen + Autoservice/Bühne) im 50-km Umkreis!";
+                badgeColor = "#f97316"; 
+            } else if (!hasPkwFullService) {
+                bedarfHeadline = "🟦 <b>PKW / LIGHT ERWEITERUNGSBEDARF:</b><br>Kein PKW-Service im 50-km Umkreis!";
+                badgeColor = "#3b82f6"; 
+            } else {
+                bedarfHeadline = "🟢 <b>GUTE ABDECKUNG:</b><br>Sowohl PKW- als auch LKW-Vollleistungen im 50-km Umkreis vorhanden.";
+                badgeColor = "#10b981"; 
+            }
+
+            let centerListHtml = "";
+            nearbyCentersAll.sort((a,b) => a.distance - b.distance).forEach(nc => {
+                centerListHtml += `
+                    <div style="font-size:11px; margin-bottom:4px; padding-bottom:4px; border-bottom:1px dashed #ddd;">
+                        <b>${nc.ort}</b> (${nc.distance.toFixed(1)} km) - <i>${nc.bedarf}</i>
+                    </div>
+                `;
+            });
+
+            const popupContent = `
+                <div class="popup-header">
+                    <h4>${customTitle || 'Regionaler 50 km Bedarfs-Check'}</h4>
+                    <p>Auswertung im 50 km Umkreis</p>
+                </div>
+                <div class="popup-body">
+                    <span class="badge" style="background-color: ${badgeColor}; width:100%; text-align:center;">
+                        ${nearbyCentersAll.length} Partner im 50 km Radius
+                    </span>
+                    
+                    <div class="radius-info-box">
+                        ${bedarfHeadline}
+                    </div>
+
+                    ${nearbyCentersAll.length > 0 ? `
+                        <div class="section-title" style="margin-top:10px;">Alle Partner im 50 km Radius:</div>
+                        <div style="max-height:120px; overflow-y:auto;">
+                            ${centerListHtml}
+                        </div>
+                    ` : ''}
+                </div>
+            `;
+
+            L.popup()
+                .setLatLng([clickLat, clickLng])
+                .setContent(popupContent)
+                .openOn(map);
+
+            filterMap();
+        }
+
+        function handleSearchInput() {
+            clearTimeout(searchTimeout);
+            let searchText = document.getElementById('searchInput').value.trim();
+
+            if (searchText === '') {
+                activeRadiusCoords = null;
+                if (radiusCircle) map.removeLayer(radiusCircle);
+                map.setView([51.1657, 10.4515], 6);
+                filterMap();
+                return;
+            }
+
+            searchTimeout = setTimeout(function() {
+                if (/^\d{5}$/.test(searchText) || searchText.length >= 3) {
+                    geocodePlzAndAnalyze(searchText);
+                } else {
+                    filterMap();
+                }
+            }, 600);
+        }
+
+        function geocodePlzAndAnalyze(query) {
+            let searchUrl = `https://nominatim.openstreetmap.org/search?format=json&countrycodes=de&q=${encodeURIComponent(query)}`;
+
+            fetch(searchUrl)
+                .then(res => res.json())
+                .then(data => {
+                    if (data && data.length > 0) {
+                        let lat = parseFloat(data[0].lat);
+                        let lng = parseFloat(data[0].lon);
+
+                        map.flyTo([lat, lng], 9, { duration: 1.2 });
+                        analyzeRadius(lat, lng, `50 km Radius für "${query.toUpperCase()}"`);
+                    } else {
+                        filterMap();
+                    }
+                })
+                .catch(err => {
+                    console.log("Geocoding fehlgeschlagen:", err);
+                    filterMap();
+                });
+        }
+
+        function filterMap() {
+            const checkboxes = document.querySelectorAll('.filter-container input[type="checkbox"]');
+            const activeFilters = Array.from(checkboxes).filter(cb => cb.checked).map(cb => cb.value);
+
+            let visibleCount = 0;
+            let radiusFilteredCount = 0;
+
+            allMarkers.forEach(item => {
+                const matchesFilter = activeFilters.includes(item.status);
+
+                if (matchesFilter) {
+                    map.addLayer(item.marker);
+                    visibleCount++;
+
+                    // Wenn ein 50km-Radius aktiv ist, prüfe exakt wie viele GEFILTERTE Partner darin liegen!
+                    if (activeRadiusCoords) {
+                        let dist = getDistanceKm(activeRadiusCoords.lat, activeRadiusCoords.lng, item.lat, item.lng);
+                        if (dist <= 50) {
+                            radiusFilteredCount++;
+                        }
+                    }
+                } else {
+                    map.removeLayer(item.marker);
+                }
+            });
+
+            if (activeRadiusCoords) {
+                document.getElementById('counter').innerText = `${radiusFilteredCount} Partner im 50 km Radius (${visibleCount} gesamt)`;
+            } else {
+                document.getElementById('counter').innerText = `${visibleCount} von ${allMarkers.length} angezeigt`;
+            }
+        }
+
+        document.addEventListener("DOMContentLoaded", initMap);
+    </script>
+</body>
+</html>
