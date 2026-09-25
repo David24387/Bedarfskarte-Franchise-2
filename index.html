@@ -83,6 +83,14 @@
         .radius-info-box {
             background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 10px; margin-top: 8px; font-size: 12px;
         }
+        .potential-card { margin:10px 0; padding:12px; border:1px solid #f59e0b; border-radius:9px; background:#fffbeb; }
+        .potential-score { font-size:29px; font-weight:850; line-height:1; color:#92400e; }
+        .potential-bar { height:8px; background:#fde68a; border-radius:999px; overflow:hidden; margin:8px 0 6px; }
+        .potential-bar > div { height:100%; background:#d97706; border-radius:999px; }
+        .potential-grid { display:grid; grid-template-columns:1fr 1fr; gap:5px 10px; font-size:11px; margin-top:8px; }
+        .potential-grid b { color:#0f172a; }
+        .hotspot-label { background:#111827; color:#fff; border:1px solid #f59e0b; border-radius:12px; padding:2px 6px; font-size:10px; font-weight:800; white-space:nowrap; }
+
     </style>
 </head>
 <body>
@@ -112,6 +120,7 @@
             <label><input type="checkbox" value="PKW/Light Bedarf" checked onchange="filterMap()"> <span class="hatch-swatch hatch-light"></span> Blau = Light fehlt</label>
         </div>
         <div class="filter-group"><label><span class="hatch-swatch" style="background:#fff"></span> Weiß = Light + Heavy abgedeckt</label></div>
+        <div class="filter-group"><label><input id="showHotspots" type="checkbox" checked onchange="toggleHotspots()"> <span class="hatch-swatch" style="border:2px solid #f59e0b;background:rgba(245,158,11,.10)"></span> Gold = attraktivste Lücken (Top 20 %)</label></div>
         <div class="legend-note"><b>So liest du die Karte:</b><br>Die <b>Punktfarbe</b> zeigt nur den BU-Typ des Centers. Die <b>schraffierte Fläche</b> zeigt den regionalen Bedarf. Die Flächen werden für ganz Deutschland direkt aus der 50-km-Abdeckung berechnet. Für jeden Ort wird geprüft, ob innerhalb von 50 km Light und Heavy vorhanden sind. Mixed deckt beides ab.</div>
         
         <div style="font-size: 11px; color: #64748b; margin-top: 8px; border-top: 1px solid #eee; padding-top: 8px;">
@@ -134,6 +143,11 @@
         let radiusCircle = null;
         let activeRadiusCoords = null; // Speichert aktuelle 50km-Mittelpunktkoordinaten
         let searchTimeout = null;
+        let regionalPotential = [];
+        let hotspotLayer = L.layerGroup();
+        let regionalDataReady = false;
+        let regionalDataStatus = 'lädt';
+
 
         function setStatus(msg) {
             document.getElementById('statusBox').innerHTML = msg;
@@ -456,6 +470,7 @@
             document.getElementById('counter').innerText = `${count} Standorte`;
             filterMap();
             buildDemandSurface();
+            loadRegionalPotentialData();
         }
 
         function addCenterMarker(c) {
@@ -543,6 +558,190 @@
             return R * c;
         }
 
+
+        // --- Marktpotenzial aus echten Regionalatlas-Daten ---
+        // Quelle: Statistische Ämter des Bundes und der Länder / Regionalatlas.
+        // Der Score wird NUR für Versorgungslücken ausgewiesen.
+        // Er misst die relative Attraktivität gegenüber anderen deutschen Kreisen.
+        const REGIONAL_METRICS = [
+            {key:'popDensity', table:'ai002_1_5', field:'AI0201', label:'Bevölkerungsdichte', unit:'EW/km²', weight:0.30, years:[2024,2023,2022]},
+            {key:'pkwDensity', table:'ai013_1', field:'AI1301', label:'Pkw je 1.000 EW', unit:'', weight:0.25, years:[2025,2024,2023,2022]},
+            {key:'income', table:'ai016_1', field:'AI1601', label:'Verfügbares Einkommen/Kopf', unit:'€', weight:0.25, years:[2023,2022,2021]},
+            {key:'workDensity', table:'ai007_1', field:'AI0701', label:'Arbeitsplatzdichte', unit:'', weight:0.20, years:[2024,2023,2022]}
+        ];
+
+        function percentileRank(values, value) {
+            const a = values.filter(Number.isFinite).sort((x,y)=>x-y);
+            if (!a.length || !Number.isFinite(value)) return null;
+            let lo=0; while (lo<a.length && a[lo] <= value) lo++;
+            return lo / a.length;
+        }
+
+        function esriRingsToGeoJSON(rings) {
+            if (!rings || !rings.length) return null;
+            // Für die Kreisdarstellung reicht die Esri-Ringstruktur als MultiPolygon.
+            // Ringe werden einzeln geführt; für Punkt-in-Polygon und Highlighting ist das robust.
+            return {type:'MultiPolygon', coordinates:rings.map(r=>[r])};
+        }
+
+        function regionalAtlasUrl(table, field, year, geometry=true) {
+            const sql = `SELECT * FROM verwaltungsgrenzen_gesamt LEFT OUTER JOIN ${table} ON ags = ags2 and jahr = jahr2 WHERE typ = 3 AND jahr = ${year} AND (jahr2 = ${year} OR jahr2 IS NULL)`;
+            const layer = {
+                source:{dataSource:{
+                    geometryType:'esriGeometryPolygon', workspaceId:'gdb', query:sql,
+                    oidFields:'id', spatialReference:{wkid:25832}, type:'queryTable'
+                }, type:'dataLayer'}
+            };
+            const u = new URL('https://www.gis-idmz.nrw.de/arcgis/rest/services/stba/regionalatlas/MapServer/dynamicLayer/query');
+            u.searchParams.set('layer', JSON.stringify(layer));
+            u.searchParams.set('f','json');
+            u.searchParams.set('outFields',`ags,gen,${field},jahr2`);
+            u.searchParams.set('returnGeometry', geometry ? 'true':'false');
+            u.searchParams.set('outSR','4326');
+            u.searchParams.set('spatialRel','esriSpatialRelIntersects');
+            u.searchParams.set('where','1=1');
+            u.searchParams.set('resultRecordCount','1000');
+            return u.toString();
+        }
+
+        async function fetchMetric(metric, needGeometry=false) {
+            for (const year of metric.years) {
+                try {
+                    const res = await fetch(regionalAtlasUrl(metric.table, metric.field, year, needGeometry));
+                    if (!res.ok) continue;
+                    const json = await res.json();
+                    if (json.error || !json.features || !json.features.length) continue;
+                    const usable = json.features.filter(f => Number.isFinite(Number(f.attributes?.[metric.field])));
+                    if (!usable.length) continue;
+                    return {year, features:json.features};
+                } catch(e) { console.warn(metric.key, year, e); }
+            }
+            throw new Error(`${metric.label} nicht abrufbar`);
+        }
+
+        async function loadRegionalPotentialData() {
+            regionalDataStatus='lädt';
+            try {
+                const results = {};
+                for (let i=0;i<REGIONAL_METRICS.length;i++) {
+                    const m=REGIONAL_METRICS[i];
+                    setStatus(`📊 Lade Regionaldaten: ${m.label}…`);
+                    results[m.key] = await fetchMetric(m, i===0);
+                }
+
+                const byAgs = new Map();
+                REGIONAL_METRICS.forEach((m,idx)=>{
+                    const result=results[m.key];
+                    result.features.forEach(f=>{
+                        const a=f.attributes||{};
+                        const ags=String(a.ags ?? a.AGS ?? '');
+                        if(!ags) return;
+                        if(!byAgs.has(ags)) byAgs.set(ags,{ags,name:a.gen||a.GEN||'',geometry:null,years:{}});
+                        const r=byAgs.get(ags);
+                        const val=Number(a[m.field]);
+                        if(Number.isFinite(val)) r[m.key]=val;
+                        r.years[m.key]=result.year;
+                        if(idx===0 && f.geometry?.rings) r.geometry=esriRingsToGeoJSON(f.geometry.rings);
+                    });
+                });
+
+                const regions=[...byAgs.values()].filter(r=>r.geometry);
+                REGIONAL_METRICS.forEach(m=>{
+                    const vals=regions.map(r=>r[m.key]).filter(Number.isFinite);
+                    regions.forEach(r=>r[m.key+'Pct']=percentileRank(vals,r[m.key]));
+                });
+
+                regions.forEach(r=>{
+                    let weighted=0, weights=0;
+                    REGIONAL_METRICS.forEach(m=>{
+                        const p=r[m.key+'Pct'];
+                        if(p!==null && Number.isFinite(p)){ weighted += p*m.weight; weights += m.weight; }
+                    });
+                    r.marketScore = weights ? Math.round(weighted/weights*100) : null;
+                });
+
+                regionalPotential=regions;
+                regionalDataReady=true;
+                regionalDataStatus='bereit';
+                buildHotspotLayer();
+                setStatus(`✅ ${rawCenterData.length} Center · Regionalatlas-Potenzialdaten für ${regions.length} Kreise geladen`);
+            } catch(e) {
+                console.error(e);
+                regionalDataStatus='Fehler';
+                setStatus(`⚠️ Karte aktiv · Regionaldaten konnten nicht vollständig geladen werden: ${e.message}`);
+            }
+        }
+
+        function regionAt(lat,lng) {
+            if(!regionalDataReady) return null;
+            const pt=turf.point([lng,lat]);
+            return regionalPotential.find(r=>{
+                try { return turf.booleanPointInPolygon(pt,{type:'Feature',properties:{},geometry:r.geometry}); }
+                catch(e){ return false; }
+            }) || null;
+        }
+
+        function scoreLabel(score) {
+            return score>=80?'Sehr hoch':score>=65?'Hoch':score>=45?'Mittel':'Niedrig';
+        }
+
+        function buildHotspotLayer() {
+            hotspotLayer.clearLayers();
+            const gaps=regionalPotential.filter(r=>{
+                if(!r.geometry || !Number.isFinite(r.marketScore)) return false;
+                try {
+                    const c=turf.centroid({type:'Feature',properties:{},geometry:r.geometry});
+                    const [lng,lat]=c.geometry.coordinates;
+                    return getCoverageState(lat,lng).status!=='Vollausgestattet';
+                } catch(e){return false;}
+            }).sort((a,b)=>b.marketScore-a.marketScore);
+
+            const threshold = gaps.length ? gaps[Math.max(0,Math.ceil(gaps.length*.20)-1)].marketScore : 101;
+            gaps.filter(r=>r.marketScore>=threshold).forEach(r=>{
+                const layer=L.geoJSON({type:'Feature',properties:{},geometry:r.geometry},{
+                    style:{color:'#f59e0b',weight:3,opacity:.95,fillColor:'#f59e0b',fillOpacity:.07}
+                }).bindTooltip(`${r.name}: ${r.marketScore}/100`,{sticky:true,className:'hotspot-label'});
+                layer.addTo(hotspotLayer);
+            });
+            toggleHotspots();
+        }
+
+        function toggleHotspots() {
+            if(!map) return;
+            const cb=document.getElementById('showHotspots');
+            if(cb && cb.checked && regionalDataReady) {
+                if(!map.hasLayer(hotspotLayer)) hotspotLayer.addTo(map);
+            } else if(map.hasLayer(hotspotLayer)) map.removeLayer(hotspotLayer);
+        }
+
+        function potentialHtml(lat,lng,isGap) {
+            if(!isGap) return `<div class="radius-info-box"><b>Potenzialscore:</b> wird nur für tatsächliche Versorgungslücken berechnet.</div>`;
+            if(!regionalDataReady) return `<div class="radius-info-box"><b>Marktpotenzial:</b> Regionalatlas-Daten ${regionalDataStatus}…</div>`;
+            const r=regionAt(lat,lng);
+            if(!r || !Number.isFinite(r.marketScore)) return `<div class="radius-info-box"><b>Marktpotenzial:</b> Für diesen Punkt liegen keine vollständigen Kreisdaten vor.</div>`;
+            const fmt=(v,d=0)=>Number.isFinite(v)?v.toLocaleString('de-DE',{maximumFractionDigits:d}):'–';
+            return `
+                <div class="section-title">Attraktivität dieser Versorgungslücke</div>
+                <div class="potential-card">
+                    <div style="display:flex;justify-content:space-between;align-items:end">
+                        <div><div style="font-size:10px;font-weight:800;color:#92400e;text-transform:uppercase">${scoreLabel(r.marketScore)}es Marktpotenzial</div>
+                        <div class="potential-score">${r.marketScore}<span style="font-size:12px"> / 100</span></div></div>
+                        <div style="font-size:10px;text-align:right;color:#78350f">${r.name}<br>relativ zu deutschen Kreisen</div>
+                    </div>
+                    <div class="potential-bar"><div style="width:${r.marketScore}%"></div></div>
+                    <div class="potential-grid">
+                        <span>Bevölkerungsdichte</span><b>${fmt(r.popDensity)} EW/km²</b>
+                        <span>Pkw-Dichte</span><b>${fmt(r.pkwDensity)} / 1.000 EW</b>
+                        <span>Verfügbares Einkommen</span><b>${fmt(r.income)} € / Kopf</b>
+                        <span>Arbeitsplatzdichte</span><b>${fmt(r.workDensity,1)}</b>
+                    </div>
+                    <div style="font-size:9px;color:#92400e;margin-top:8px;line-height:1.35">
+                        Score: Bevölkerung 30 % · Pkw-Dichte 25 % · verfügbares Einkommen 25 % · Arbeitsplatzdichte 20 %.
+                        Daten: Regionalatlas Deutschland, Statistische Ämter des Bundes und der Länder. Kein offizieller Standortscore.
+                    </div>
+                </div>`;
+        }
+
         function analyzeRadius(clickLat, clickLng, customTitle) {
             activeRadiusCoords = { lat: clickLat, lng: clickLng };
 
@@ -611,11 +810,12 @@
                         ${bedarfHeadline}
                     </div>
 
+                    ${potentialHtml(clickLat, clickLng, !hasPkwFullService || !hasLkwFullService)}
+
                     <div class="section-title" style="margin-top:10px;">Gebiets-KPIs</div>
                     <div class="stat-row"><span class="stat-label">Center im Radius:</span><span class="stat-val">${nearbyCentersAll.length}</span></div>
                     <div class="stat-row"><span class="stat-label">Light-Abdeckung:</span><span class="stat-val">${hasPkwFullService ? 'Ja' : 'Nein'}</span></div>
                     <div class="stat-row"><span class="stat-label">Heavy-Abdeckung:</span><span class="stat-val">${hasLkwFullService ? 'Ja' : 'Nein'}</span></div>
-                    <div class="stat-row"><span class="stat-label">Kaufkraft:</span><span class="stat-val" style="color:#94a3b8">noch keine Datenquelle</span></div>
 
                     ${nearbyCentersAll.length > 0 ? `
                         <div class="section-title" style="margin-top:10px;">Alle Partner im 50 km Radius:</div>
