@@ -1,0 +1,9 @@
+1. index_marktpotenzial_lokal.html als index.html hochladen.
+2. build_regionaldaten.py ins Root hochladen.
+3. regionaldaten_workflow.yml als .github/workflows/regionaldaten.yml hochladen.
+4. GitHub → Actions → Regionaldaten aktualisieren → Run workflow.
+5. Der Workflow erzeugt regionaldaten.json und committet sie automatisch.
+6. Danach Seite neu laden. Der Browser nutzt nur noch die lokale regionaldaten.json.
+
+Score: Bevölkerungsdichte 30 %, Pkw-Dichte 25 %, verfügbares Einkommen/Kopf 25 %, Arbeitsplatzdichte 20 %.
+Die neuesten verfügbaren Berichtsjahre werden automatisch aus dem Regionalatlas-Katalog ermittelt.
