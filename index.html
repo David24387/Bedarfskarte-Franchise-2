@@ -352,6 +352,20 @@
                 const ctx = tile.getContext('2d');
                 const step = 4; // fein genug für weiche, zusammenhängende Flächen
                 const z = coords.z;
+                tile.style.cursor = 'pointer';
+
+                // Klick auf eine schraffierte Zone startet den normalen 50-km-Radius-Check.
+                tile.addEventListener('click', (ev) => {
+                    const rect = tile.getBoundingClientRect();
+                    const localX = (ev.clientX - rect.left) * (tile.width / rect.width);
+                    const localY = (ev.clientY - rect.top) * (tile.height / rect.height);
+                    const worldPoint = L.point(coords.x * size.x + localX, coords.y * size.y + localY);
+                    const ll = map.unproject(worldPoint, z);
+                    if (isInsideGermany(ll.lat, ll.lng)) {
+                        L.DomEvent.stopPropagation(ev);
+                        analyzeRadius(ll.lat, ll.lng, 'Regionaler 50-km-Bedarfs-Check');
+                    }
+                });
 
                 const palette = this.demandStatus === 'Beide Bedarfe'
                     ? {fill:'rgba(239,68,68,.25)', line:'rgba(185,28,28,.58)', slash:1}
@@ -401,7 +415,7 @@
             if (!map.getPane('demandPane')) {
                 map.createPane('demandPane');
                 map.getPane('demandPane').style.zIndex = 350;
-                map.getPane('demandPane').style.pointerEvents = 'none';
+                map.getPane('demandPane').style.pointerEvents = 'auto';
             }
 
             const configs = [
@@ -495,6 +509,12 @@
             `;
 
             marker.bindPopup(popupContent);
+
+            // Klick auf einen Center-Punkt: 50-km-Radius + regionale Analyse öffnen.
+            marker.on('click', function(e) {
+                L.DomEvent.stopPropagation(e);
+                analyzeRadius(c.lat, c.lng, `${c.ort || c.plz || 'Center'} – 50-km-Radius`);
+            });
 
             allMarkers.push({
                 marker: marker,
@@ -590,6 +610,12 @@
                     <div class="radius-info-box">
                         ${bedarfHeadline}
                     </div>
+
+                    <div class="section-title" style="margin-top:10px;">Gebiets-KPIs</div>
+                    <div class="stat-row"><span class="stat-label">Center im Radius:</span><span class="stat-val">${nearbyCentersAll.length}</span></div>
+                    <div class="stat-row"><span class="stat-label">Light-Abdeckung:</span><span class="stat-val">${hasPkwFullService ? 'Ja' : 'Nein'}</span></div>
+                    <div class="stat-row"><span class="stat-label">Heavy-Abdeckung:</span><span class="stat-val">${hasLkwFullService ? 'Ja' : 'Nein'}</span></div>
+                    <div class="stat-row"><span class="stat-label">Kaufkraft:</span><span class="stat-val" style="color:#94a3b8">noch keine Datenquelle</span></div>
 
                     ${nearbyCentersAll.length > 0 ? `
                         <div class="section-title" style="margin-top:10px;">Alle Partner im 50 km Radius:</div>
