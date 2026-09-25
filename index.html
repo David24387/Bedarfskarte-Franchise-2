@@ -112,7 +112,7 @@
             <label><input type="checkbox" value="PKW/Light Bedarf" checked onchange="filterMap()"> <span class="hatch-swatch hatch-light"></span> Blau = Light fehlt</label>
         </div>
         <div class="filter-group"><label><span class="hatch-swatch" style="background:#fff"></span> Weiß = Light + Heavy abgedeckt</label></div>
-        <div class="legend-note"><b>So liest du die Karte:</b><br>Die <b>Punktfarbe</b> zeigt nur den BU-Typ des Centers. Die <b>schraffierte Fläche</b> zeigt den regionalen Bedarf. Für jeden Ort wird geprüft, ob innerhalb von 50 km Light und Heavy vorhanden sind. Mixed deckt beides ab.</div>
+        <div class="legend-note"><b>So liest du die Karte:</b><br>Die <b>Punktfarbe</b> zeigt nur den BU-Typ des Centers. Die <b>schraffierte Fläche</b> zeigt den regionalen Bedarf. Die Flächen werden für ganz Deutschland direkt aus der 50-km-Abdeckung berechnet. Für jeden Ort wird geprüft, ob innerhalb von 50 km Light und Heavy vorhanden sind. Mixed deckt beides ab.</div>
         
         <div style="font-size: 11px; color: #64748b; margin-top: 8px; border-top: 1px solid #eee; padding-top: 8px;">
             📍 <b>Tipp:</b> Gib eine PLZ ein (z. B. 60318) für den automatischen <b>50 km Radius-Check</b>!
@@ -310,133 +310,119 @@
             return '#10b981';
         }
 
-        function unionFeatures(features) {
-            if (!features.length) return null;
-            if (features.length === 1) return features[0];
-            try {
-                return turf.union(turf.featureCollection(features));
-            } catch (e) {
-                console.warn('Union fehlgeschlagen, versuche schrittweise:', e);
-                let result = features[0];
-                for (let i = 1; i < features.length; i++) {
-                    try {
-                        result = turf.union(turf.featureCollection([result, features[i]]));
-                    } catch (_) {}
+        // Vereinfachte Deutschlandgrenze direkt eingebettet:
+        // Dadurch hängt die Flächendarstellung nicht mehr von einem externen GeoJSON-Download ab.
+        const germanyMask = {
+            "type":"Feature","properties":{"name":"Germany"},"geometry":{"type":"Polygon","coordinates":[[
+                [9.921906,54.983104],[9.93958,54.596642],[10.950112,54.363607],[10.939467,54.008693],
+                [11.956252,54.196486],[12.51844,54.470371],[13.647467,54.075511],[14.119686,53.757029],
+                [14.353315,53.248171],[14.074521,52.981263],[14.4376,52.62485],[14.685026,52.089947],
+                [14.607098,51.745188],[15.016996,51.106674],[14.570718,51.002339],[14.307013,51.117268],
+                [14.056228,50.926918],[13.338132,50.733234],[12.966837,50.484076],[12.240111,50.266338],
+                [12.415191,49.969121],[12.521024,49.547415],[13.031329,49.307068],[13.595946,48.877172],
+                [13.243357,48.416115],[12.884103,48.289146],[13.025851,47.637584],[12.932627,47.467646],
+                [12.62076,47.672388],[12.141357,47.703083],[11.426414,47.523766],[10.544504,47.566399],
+                [10.402084,47.302488],[9.896068,47.580197],[9.594226,47.525058],[8.522612,47.830828],
+                [8.317301,47.61358],[7.466759,47.620582],[7.593676,48.333019],[8.099279,49.017784],
+                [6.65823,49.201958],[6.18632,49.463803],[6.242751,49.902226],[6.043073,50.128052],
+                [6.156658,50.803721],[5.988658,51.851616],[6.589397,51.852029],[6.84287,52.22844],
+                [7.092053,53.144043],[6.90514,53.482162],[7.100425,53.693932],[7.936239,53.748296],
+                [8.121706,53.527792],[8.800734,54.020786],[8.572118,54.395646],[8.526229,54.962744],
+                [9.282049,54.830865],[9.921906,54.983104]
+            ]]}}
+        };
+
+        function isInsideGermany(lat, lng) {
+            return turf.booleanPointInPolygon(turf.point([lng, lat]), germanyMask);
+        }
+
+        // Die Bedarfsflächen werden direkt als Canvas-Flächen gezeichnet.
+        // Das ist deutlich robuster als tausende Polygon-Unions und zeigt garantiert
+        // zusammenhängende Gebiete statt Kreise oder Rasterrahmen.
+        const DemandCanvasLayer = L.GridLayer.extend({
+            initialize: function(status, options) {
+                this.demandStatus = status;
+                L.GridLayer.prototype.initialize.call(this, options || {});
+            },
+            createTile: function(coords) {
+                const tile = document.createElement('canvas');
+                const size = this.getTileSize();
+                tile.width = size.x;
+                tile.height = size.y;
+                const ctx = tile.getContext('2d');
+                const step = 4; // fein genug für weiche, zusammenhängende Flächen
+                const z = coords.z;
+
+                const palette = this.demandStatus === 'Beide Bedarfe'
+                    ? {fill:'rgba(239,68,68,.25)', line:'rgba(185,28,28,.58)', slash:1}
+                    : this.demandStatus === 'LKW/Heavy Bedarf'
+                        ? {fill:'rgba(249,115,22,.22)', line:'rgba(234,88,12,.58)', slash:1}
+                        : {fill:'rgba(59,130,246,.20)', line:'rgba(37,99,235,.58)', slash:-1};
+
+                for (let y=0; y<size.y; y+=step) {
+                    for (let x=0; x<size.x; x+=step) {
+                        const worldPoint = L.point(coords.x*size.x + x + step/2, coords.y*size.y + y + step/2);
+                        const ll = map.unproject(worldPoint, z);
+                        if (!isInsideGermany(ll.lat, ll.lng)) continue;
+
+                        const state = getCoverageState(ll.lat, ll.lng);
+                        if (state.status !== this.demandStatus) continue;
+
+                        ctx.fillStyle = palette.fill;
+                        ctx.fillRect(x, y, step+1, step+1);
+
+                        // sichtbare Schraffur, damit Bedarf auch auf grüner Basiskarte klar erkennbar ist
+                        ctx.strokeStyle = palette.line;
+                        ctx.lineWidth = 0.8;
+                        ctx.beginPath();
+                        if (palette.slash > 0) {
+                            ctx.moveTo(x, y);
+                            ctx.lineTo(x+step, y+step);
+                        } else {
+                            ctx.moveTo(x, y+step);
+                            ctx.lineTo(x+step, y);
+                        }
+                        ctx.stroke();
+                    }
                 }
-                return result;
+                return tile;
             }
-        }
-
-        function geoDifference(a, b) {
-            if (!a) return null;
-            if (!b) return a;
-            try { return turf.difference(turf.featureCollection([a, b])); }
-            catch (e) { console.warn('Difference:', e); return a; }
-        }
-
-        function geoIntersect(a, b) {
-            if (!a || !b) return null;
-            try { return turf.intersect(turf.featureCollection([a, b])); }
-            catch (e) { console.warn('Intersect:', e); return null; }
-        }
-
-        function addDemandPolygon(feature, status) {
-            if (!feature) return;
-            const color = status === 'Beide Bedarfe' ? '#ef4444'
-                : status === 'LKW/Heavy Bedarf' ? '#f97316' : '#3b82f6';
-
-            const layer = L.geoJSON(feature, {
-                style: {
-                    color: color,
-                    weight: 1.3,
-                    opacity: 0.75,
-                    fillColor: color,
-                    fillOpacity: 0.18
-                },
-                interactive: true,
-                onEachFeature: function(feature, poly) {
-                    poly.on('add', function() {
-                        ensureHatchPatterns();
-                        if (poly._path) poly._path.setAttribute('fill', patternForStatus(status));
-                    });
-                    poly.on('click', function(e) {
-                        const state = getCoverageState(e.latlng.lat, e.latlng.lng);
-                        const nearby = state.nearby.sort((a,b)=>a.distance-b.distance).slice(0,12);
-                        const list = nearby.map(n =>
-                            `<div style="font-size:11px;padding:3px 0;border-bottom:1px dashed #ddd">
-                                <b>${n.ort || n.plz || n.kst}</b> – BU ${n.buType} (${n.distance.toFixed(1)} km)
-                             </div>`).join('');
-
-                        const title = state.status === 'Beide Bedarfe' ? 'Light + Heavy fehlen'
-                            : state.status === 'LKW/Heavy Bedarf' ? 'Heavy fehlt' : 'Light fehlt';
-                        const reason = state.status === 'Beide Bedarfe'
-                            ? 'Kein Light/Mixed und kein Heavy/Mixed innerhalb von 50 km.'
-                            : state.status === 'LKW/Heavy Bedarf'
-                                ? 'Light ist abgedeckt, aber es gibt kein Heavy/Mixed innerhalb von 50 km.'
-                                : 'Heavy ist abgedeckt, aber es gibt kein Light/Mixed innerhalb von 50 km.';
-
-                        L.popup().setLatLng(e.latlng).setContent(
-                            `<div class="popup-header"><h4>${title}</h4><p>Regionaler Bedarf im 50-km-Radius</p></div>
-                             <div class="popup-body">
-                                <span class="badge" style="background:${color}">${state.status}</span>
-                                <div class="radius-info-box"><b>Warum diese Farbe?</b><br>${reason}</div>
-                                <div class="section-title">Center im 50-km-Umkreis (${state.nearby.length})</div>
-                                ${list || '<b>Keine Center im 50-km-Umkreis.</b>'}
-                             </div>`
-                        ).openOn(map);
-                        L.DomEvent.stopPropagation(e);
-                    });
-                }
-            }).addTo(map);
-            demandAreas.push({layer, status});
-        }
+        });
 
         async function buildDemandSurface() {
-            demandAreas.forEach(item => map.removeLayer(item.layer));
+            demandAreas.forEach(item => {
+                if (map.hasLayer(item.layer)) map.removeLayer(item.layer);
+            });
             demandAreas = [];
-            setStatus('🗺️ Berechne echte zusammenhängende 50-km-Bedarfsflächen…');
 
-            try {
-                const res = await fetch('https://raw.githubusercontent.com/johan/world.geo.json/master/countries/DEU.geo.json');
-                if (!res.ok) throw new Error('Deutschland-Grenze nicht ladbar');
-                const germany = await res.json();
+            setStatus('🗺️ Zeichne flächendeckende 50-km-Bedarfszonen…');
 
-                // Versorgung entsteht als echte 50-km-Pufferfläche um ALLE passenden Center.
-                // Mixed fließt in Light UND Heavy ein.
-                const lightBuffers = rawCenterData
-                    .filter(c => c.buType === 'Light' || c.buType === 'Mixed')
-                    .map(c => turf.buffer(turf.point([c.lng, c.lat]), 50, {units:'kilometers', steps:24}));
-
-                const heavyBuffers = rawCenterData
-                    .filter(c => c.buType === 'Heavy' || c.buType === 'Mixed')
-                    .map(c => turf.buffer(turf.point([c.lng, c.lat]), 50, {units:'kilometers', steps:24}));
-
-                setStatus(`🗺️ Vereinige ${lightBuffers.length} Light- und ${heavyBuffers.length} Heavy-Abdeckungen…`);
-
-                const lightCoverage = unionFeatures(lightBuffers);
-                const heavyCoverage = unionFeatures(heavyBuffers);
-
-                // Fehlende Versorgung = Deutschland MINUS jeweilige 50-km-Abdeckung.
-                const lightMissingAll = geoDifference(germany, lightCoverage);
-                const heavyMissingAll = geoDifference(germany, heavyCoverage);
-
-                // Rot: beides fehlt.
-                const bothMissing = geoIntersect(lightMissingAll, heavyMissingAll);
-
-                // Orange/Blau exklusiv, damit sich die Farben nicht überlagern.
-                const heavyOnlyMissing = geoDifference(heavyMissingAll, bothMissing);
-                const lightOnlyMissing = geoDifference(lightMissingAll, bothMissing);
-
-                addDemandPolygon(bothMissing, 'Beide Bedarfe');
-                addDemandPolygon(heavyOnlyMissing, 'LKW/Heavy Bedarf');
-                addDemandPolygon(lightOnlyMissing, 'PKW/Light Bedarf');
-
-                filterMap();
-                setStatus(`✅ <b>${rawCenterData.length} Center geladen</b> · echte 50-km-Versorgungsflächen aktiv`);
-            } catch (e) {
-                console.error(e);
-                setStatus(`⚠️ Bedarfsflächen konnten nicht berechnet werden: ${e.message}. Center bleiben sichtbar.`);
+            // Eigene Pane: über der Basiskarte, aber unter den Center-Punkten.
+            if (!map.getPane('demandPane')) {
+                map.createPane('demandPane');
+                map.getPane('demandPane').style.zIndex = 350;
+                map.getPane('demandPane').style.pointerEvents = 'none';
             }
+
+            const configs = [
+                ['Beide Bedarfe', 330],
+                ['LKW/Heavy Bedarf', 320],
+                ['PKW/Light Bedarf', 310]
+            ];
+
+            configs.forEach(([status, zIndex]) => {
+                const layer = new DemandCanvasLayer(status, {
+                    tileSize: 256,
+                    pane: 'demandPane',
+                    zIndex: zIndex,
+                    updateWhenIdle: false,
+                    keepBuffer: 2
+                }).addTo(map);
+                demandAreas.push({layer, status});
+            });
+
+            filterMap();
+            setStatus(`✅ <b>${rawCenterData.length} Center geladen</b> · zusammenhängende 50-km-Bedarfsflächen aktiv`);
         }
 
         function loadCenterData(dataArray) {
@@ -677,10 +663,7 @@
             demandAreas.forEach(item => {
                 if (activeFilters.includes(item.status)) {
                     if (!map.hasLayer(item.layer)) map.addLayer(item.layer);
-                    ensureHatchPatterns();
-                    item.layer.eachLayer(poly => {
-                        if (poly._path) poly._path.setAttribute('fill', patternForStatus(item.status));
-                    });
+
                 } else if (map.hasLayer(item.layer)) {
                     map.removeLayer(item.layer);
                 }
