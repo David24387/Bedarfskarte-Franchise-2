@@ -116,6 +116,7 @@
 
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.3.2/papaparse.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@turf/turf@7/turf.min.js"></script>
     
     <script>
         let map;
@@ -246,22 +247,33 @@
         }
 
         function calculateNetworkDemand() {
+            // Punktstatus der Center für Marker/Popups. Die eigentlichen Bedarfsflächen
+            // werden anschließend unabhängig von Center-Positionen flächendeckend berechnet.
             rawCenterData.forEach(c => {
-                const nearby = rawCenterData.filter(other =>
-                    getDistanceKm(c.lat, c.lng, other.lat, other.lng) <= 50
-                );
-                const hasLightCoverage = nearby.some(n => n.buType === 'Light' || n.buType === 'Mixed');
-                const hasHeavyCoverage = nearby.some(n => n.buType === 'Heavy' || n.buType === 'Mixed');
-
-                c.nearbyCenters = nearby;
-                c.hasFullPkw = hasLightCoverage;
-                c.hasFullLkw = hasHeavyCoverage;
-
-                if (!hasHeavyCoverage && hasLightCoverage) c.bedarf = 'LKW/Heavy Bedarf';
-                else if (!hasLightCoverage && hasHeavyCoverage) c.bedarf = 'PKW/Light Bedarf';
-                else if (!hasLightCoverage && !hasHeavyCoverage) c.bedarf = 'Beide Bedarfe';
-                else c.bedarf = 'Kein Bedarf';
+                const state = getCoverageState(c.lat, c.lng);
+                c.nearbyCenters = state.nearby;
+                c.hasFullPkw = state.hasLight;
+                c.hasFullLkw = state.hasHeavy;
+                c.bedarf = state.status;
             });
+        }
+
+        function getCoverageState(lat, lng) {
+            const nearby = [];
+            let hasLight = false, hasHeavy = false;
+            rawCenterData.forEach(c => {
+                const d = getDistanceKm(lat, lng, c.lat, c.lng);
+                if (d <= 50) {
+                    nearby.push({ ...c, distance: d });
+                    if (c.buType === 'Light' || c.buType === 'Mixed') hasLight = true;
+                    if (c.buType === 'Heavy' || c.buType === 'Mixed') hasHeavy = true;
+                }
+            });
+            let status = 'Vollausgestattet';
+            if (!hasLight && !hasHeavy) status = 'Beide Bedarfe';
+            else if (hasLight && !hasHeavy) status = 'LKW/Heavy Bedarf';
+            else if (!hasLight && hasHeavy) status = 'PKW/Light Bedarf';
+            return { hasLight, hasHeavy, nearby, status };
         }
 
         function ensureHatchPatterns() {
@@ -271,35 +283,66 @@
             const defs = document.createElementNS(ns, 'defs');
             defs.innerHTML = `
                 <pattern id="heavyHatch" patternUnits="userSpaceOnUse" width="10" height="10" patternTransform="rotate(45)">
-                    <rect width="10" height="10" fill="#f97316" fill-opacity="0.10"></rect>
-                    <line x1="0" y1="0" x2="0" y2="10" stroke="#f97316" stroke-width="3" stroke-opacity="0.72"></line>
+                    <rect width="10" height="10" fill="#f97316" fill-opacity="0.18"></rect><line x1="0" y1="0" x2="0" y2="10" stroke="#f97316" stroke-width="3" stroke-opacity="0.78"></line>
                 </pattern>
                 <pattern id="lightHatch" patternUnits="userSpaceOnUse" width="10" height="10" patternTransform="rotate(-45)">
-                    <rect width="10" height="10" fill="#3b82f6" fill-opacity="0.08"></rect>
-                    <line x1="0" y1="0" x2="0" y2="10" stroke="#3b82f6" stroke-width="3" stroke-opacity="0.68"></line>
+                    <rect width="10" height="10" fill="#3b82f6" fill-opacity="0.16"></rect><line x1="0" y1="0" x2="0" y2="10" stroke="#3b82f6" stroke-width="3" stroke-opacity="0.75"></line>
+                </pattern>
+                <pattern id="bothHatch" patternUnits="userSpaceOnUse" width="12" height="12">
+                    <rect width="12" height="12" fill="#ef4444" fill-opacity="0.22"></rect>
+                    <path d="M-3,3 l6,-6 M0,12 l12,-12 M9,15 l6,-6 M-3,9 l12,12 M3,-3 l12,12" stroke="#dc2626" stroke-width="2.4" stroke-opacity="0.82"></path>
                 </pattern>`;
             svg.insertBefore(defs, svg.firstChild);
         }
 
-        function addDemandArea(c, type) {
-            const isHeavy = type === 'LKW/Heavy Bedarf';
-            const color = isHeavy ? '#f97316' : '#3b82f6';
-            const circle = L.circle([c.lat, c.lng], {
-                radius: 50000, color, weight: 1.5, opacity: 0.75,
-                fillColor: color, fillOpacity: 0.10, interactive: true
-            }).addTo(map);
-            ensureHatchPatterns();
-            if (circle._path) circle._path.setAttribute('fill', isHeavy ? 'url(#heavyHatch)' : 'url(#lightHatch)');
+        function patternForStatus(status) {
+            if (status === 'LKW/Heavy Bedarf') return 'url(#heavyHatch)';
+            if (status === 'PKW/Light Bedarf') return 'url(#lightHatch)';
+            if (status === 'Beide Bedarfe') return 'url(#bothHatch)';
+            return '#10b981';
+        }
 
-            const nearby = (c.nearbyCenters || []).slice().sort((a,b) =>
-                getDistanceKm(c.lat,c.lng,a.lat,a.lng)-getDistanceKm(c.lat,c.lng,b.lat,b.lng)
-            );
-            const rows = nearby.map(n => {
-                const d = getDistanceKm(c.lat,c.lng,n.lat,n.lng).toFixed(1);
-                return `<div style="font-size:11px;padding:3px 0;border-bottom:1px dashed #ddd"><b>${n.ort || n.plz}</b> – ${n.buType} (${d} km)</div>`;
-            }).join('');
-            circle.bindPopup(`<div class="popup-header"><h4>${isHeavy ? 'Heavy' : 'Light'}-Bedarfsgebiet</h4><p>50-km-Netzwerkprüfung um ${c.ort || c.plz}</p></div><div class="popup-body"><span class="badge" style="background:${color}">${type}</span><div class="radius-info-box"><b>BU des Ausgangscenters:</b> ${c.buType}<br>${isHeavy ? 'Im 50-km-Radius befindet sich kein Heavy- oder Mixed-Center.' : 'Im 50-km-Radius befindet sich kein Light- oder Mixed-Center.'}</div><div class="section-title">Berücksichtigte Center</div>${rows || 'Keine Center im Radius.'}</div>`);
-            demandAreas.push({ layer: circle, status: type });
+        async function buildDemandSurface() {
+            demandAreas.forEach(item => map.removeLayer(item.layer));
+            demandAreas = [];
+            setStatus('🗺️ Berechne flächendeckende 50-km-Versorgungsanalyse…');
+            try {
+                const res = await fetch('https://raw.githubusercontent.com/johan/world.geo.json/master/countries/DEU.geo.json');
+                if (!res.ok) throw new Error('Deutschland-Grenze nicht ladbar');
+                const germany = await res.json();
+                // 15-km-Raster: klein genug für gut erkennbare zusammenhängende Flächen,
+                // aber performant genug für GitHub Pages.
+                const grid = turf.squareGrid([5.75, 47.15, 15.05, 55.10], 15, {units:'kilometers'});
+                let cells = 0;
+                grid.features.forEach(feature => {
+                    const center = turf.centroid(feature);
+                    if (!turf.booleanPointInPolygon(center, germany)) return;
+                    const [lng, lat] = center.geometry.coordinates;
+                    const state = getCoverageState(lat, lng);
+                    if (state.status === 'Vollausgestattet') return; // gute Abdeckung bleibt transparent
+                    cells++;
+                    const color = state.status === 'Beide Bedarfe' ? '#ef4444' : state.status === 'LKW/Heavy Bedarf' ? '#f97316' : '#3b82f6';
+                    const layer = L.geoJSON(feature, {
+                        style: { color: color, weight: 0.35, opacity: 0.35, fillColor: color, fillOpacity: 0.18 },
+                        interactive: true
+                    }).addTo(map);
+                    layer.eachLayer(poly => {
+                        ensureHatchPatterns();
+                        if (poly._path) poly._path.setAttribute('fill', patternForStatus(state.status));
+                        const nearby = state.nearby.sort((a,b)=>a.distance-b.distance).slice(0,8);
+                        const list = nearby.map(n => `<div style="font-size:11px;padding:3px 0;border-bottom:1px dashed #ddd"><b>${n.ort || n.plz}</b> – ${n.buType} (${n.distance.toFixed(1)} km)</div>`).join('');
+                        const title = state.status === 'Beide Bedarfe' ? 'Genereller Bedarf' : state.status === 'LKW/Heavy Bedarf' ? 'Heavy-Bedarf' : 'Light-Bedarf';
+                        const reason = state.status === 'Beide Bedarfe' ? 'Innerhalb von 50 km gibt es weder Light- noch Heavy-/Mixed-Abdeckung.' : state.status === 'LKW/Heavy Bedarf' ? 'Light ist abgedeckt, aber innerhalb von 50 km fehlt Heavy oder Mixed.' : 'Heavy ist abgedeckt, aber innerhalb von 50 km fehlt Light oder Mixed.';
+                        poly.bindPopup(`<div class="popup-header"><h4>${title}</h4><p>Flächendeckende 50-km-Netzwerkanalyse</p></div><div class="popup-body"><span class="badge" style="background:${color}">${state.status}</span><div class="radius-info-box">${reason}</div><div class="section-title">Center im 50-km-Umkreis</div>${list || '<b>Keine Center im 50-km-Umkreis.</b>'}</div>`);
+                    });
+                    demandAreas.push({layer, status: state.status});
+                });
+                filterMap();
+                setStatus(`✅ <b>${rawCenterData.length} Center</b> · ${cells} Bedarfszellen analysiert`);
+            } catch (e) {
+                console.error(e);
+                setStatus('⚠️ Bedarfsflächen konnten nicht geladen werden. Center sind weiterhin verfügbar.');
+            }
         }
 
         function loadCenterData(dataArray) {
@@ -313,13 +356,12 @@
                 if (center.lat && center.lng && !isNaN(center.lat) && !isNaN(center.lng)) {
                     count++;
                     addCenterMarker(center);
-                    if (center.bedarf === 'LKW/Heavy Bedarf' || center.bedarf === 'Beide Bedarfe') addDemandArea(center, 'LKW/Heavy Bedarf');
-                    if (center.bedarf === 'PKW/Light Bedarf' || center.bedarf === 'Beide Bedarfe') addDemandArea(center, 'PKW/Light Bedarf');
                 }
             });
 
             document.getElementById('counter').innerText = `${count} Standorte`;
             filterMap();
+            buildDemandSurface();
         }
 
         function addCenterMarker(c) {
@@ -537,11 +579,11 @@
 
             demandAreas.forEach(item => {
                 const show = activeFilters.includes(item.status);
-                if (show) map.addLayer(item.layer); else map.removeLayer(item.layer);
-                if (show && item.layer._path) {
+                if (show) {
+                    map.addLayer(item.layer);
                     ensureHatchPatterns();
-                    item.layer._path.setAttribute('fill', item.status === 'LKW/Heavy Bedarf' ? 'url(#heavyHatch)' : 'url(#lightHatch)');
-                }
+                    item.layer.eachLayer ? item.layer.eachLayer(poly => { if (poly._path) poly._path.setAttribute('fill', patternForStatus(item.status)); }) : null;
+                } else map.removeLayer(item.layer);
             });
 
             allMarkers.forEach(item => {
