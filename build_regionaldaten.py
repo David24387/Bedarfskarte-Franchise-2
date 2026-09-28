@@ -12,10 +12,8 @@ METRICS={
  "workDensity":{"code":"AI007-1","field":"AI0701","weight":.20,"label":"Arbeitsplatzdichte","unit":"je 1.000 EW","valid":(0,5000)},
 }
 LEVEL_LABEL={5:"Gemeinde / Verbandsgemeinde",3:"Kreis / kreisfreie Stadt"}
-UA={"User-Agent":"Euromaster-Franchise-Potential/3.2"}
+UA={"User-Agent":"Euromaster-Franchise-Potential/3.3"}
 TIMEOUT=25; PAGE_SIZE=1000; MAX_PAGES=20
-# ArcGIS generalizes geometry on the server. 0.001 degrees is roughly 70-110 m in Germany:
-# more than sufficient for a national franchise-potential map and dramatically smaller than raw boundaries.
 GEOMETRY_PRECISION=4
 MAX_ALLOWABLE_OFFSET=0.001
 
@@ -99,10 +97,8 @@ def newest_finest(code,field,item,valid_range):
 
 def add_percentiles(data):
  vals=sorted(x['value'] for x in data);n=len(vals)
- for x in data:
-  # binary search rank instead of O(n²) repeated scanning
-  import bisect
-  x['pct']=bisect.bisect_right(vals,x['value'])/n
+ import bisect
+ for x in data:x['pct']=bisect.bisect_right(vals,x['value'])/n
 
 def round_geometry(g,precision=4):
  def rec(x):
@@ -110,6 +106,37 @@ def round_geometry(g,precision=4):
   if isinstance(x,float):return round(x,precision)
   return x
  return {'type':g.get('type'),'coordinates':rec(g.get('coordinates',[]))}
+
+def lookup_for_metric(rows,level):
+ return {x['ags']:x for x in rows if x.get('ags')}
+
+def build_regions(metric_layers,meta):
+ # The map already consumes a flat `regions` array. Population density is the
+ # finest available layer and therefore defines the displayed local geometry.
+ # Metrics only available at district level are joined via the first 5 AGS digits.
+ base=metric_layers['popDensity']
+ lookups={k:lookup_for_metric(v,meta[k]['level']) for k,v in metric_layers.items()}
+ regions=[];missing={k:0 for k in METRICS}
+ for b in base:
+  aid=b.get('ags',''); values={}; pcts={}; levels={}
+  for key in METRICS:
+   level=meta[key]['level']
+   key_id=aid if level==5 else aid[:5]
+   row=lookups[key].get(key_id)
+   if row:
+    values[key]=row['value'];pcts[key]=row['pct'];levels[key]=meta[key]['levelLabel']
+   else:
+    values[key]=None;pcts[key]=None;levels[key]=meta[key]['levelLabel'];missing[key]+=1
+  available=[(METRICS[k]['weight'],pcts[k]) for k in METRICS if pcts[k] is not None]
+  weight_sum=sum(w for w,_ in available)
+  score=round(100*sum(w*p for w,p in available)/weight_sum) if weight_sum else None
+  regions.append({
+   'ags':aid,'name':b.get('name',''),'geometry':round_geometry(b['geometry']),
+   'score':score,'popDensity':values['popDensity'],'pkwDensity':values['pkwDensity'],
+   'income':values['income'],'workDensity':values['workDensity'],'dataLevels':levels
+  })
+ print('map regions:',len(regions),'missing joins:',missing,flush=True)
+ return regions,missing
 
 def main():
  cat=index_catalog(get_json(CATALOG));metric_layers={};meta={};audit={}
@@ -123,17 +150,18 @@ def main():
   meta[key]={'code':m['code'],'field':m['field'],'label':m['label'],'unit':m['unit'],'year':year,'level':level,'levelLabel':LEVEL_LABEL[level],'weight':m['weight'],'attempts':attempts}
   audit[key]={'rows':len(data),'min':min(vals),'median':statistics.median(vals),'max':max(vals),'level':level,'year':year}
 
+ regions,missing_joins=build_regions(metric_layers,meta)
  geo=get_json(COUNTIES);districts=[]
  for f in geo.get('features',[]):
   aid=ags(f.get('id') or (f.get('properties') or {}).get('id'),3)
   if aid:districts.append({'ags':aid,'name':(f.get('properties') or {}).get('name',''),'geometry':round_geometry(f['geometry'])})
- payload={'source':'Regionalatlas Deutschland – Statistische Ämter des Bundes und der Länder','methodology':'Each KPI uses the finest usable official Regionalatlas geography. Invalid sentinel/outlier values are rejected. Municipality geometry is server-generalized for web-map use. Disposable income is not commercial purchasing power.','metrics':meta,'audit':audit,'metricLayers':metric_layers,'districts':districts}
+ payload={'source':'Regionalatlas Deutschland – Statistische Ämter des Bundes und der Länder','methodology':'Each KPI uses the finest usable official Regionalatlas geography. The web-map regions use the finest population-density geometry; district-level KPIs are joined by AGS and clearly retain their source level. Score is a weighted percentile score over all available KPIs. Disposable income is not commercial purchasing power.','metrics':meta,'audit':audit,'regions':regions,'metricLayers':metric_layers,'districts':districts}
  raw=json.dumps(payload,ensure_ascii=False,separators=(',',':'))
  size=len(raw.encode('utf-8'))
  print('regionaldaten.json size:',round(size/1024/1024,2),'MB',flush=True)
  if size>90*1024*1024:raise RuntimeError(f'regionaldaten.json still too large: {size/1024/1024:.1f} MB')
  Path('regionaldaten.json').write_text(raw,encoding='utf-8')
- Path('regionaldaten_audit.json').write_text(json.dumps({'metrics':meta,'audit':audit,'fileSizeMB':round(size/1024/1024,2)},ensure_ascii=False,indent=2),encoding='utf-8')
+ Path('regionaldaten_audit.json').write_text(json.dumps({'metrics':meta,'audit':audit,'mapRegions':len(regions),'missingJoins':missing_joins,'fileSizeMB':round(size/1024/1024,2)},ensure_ascii=False,indent=2),encoding='utf-8')
  print('AUDIT OK',json.dumps(audit,ensure_ascii=False),flush=True)
 
 if __name__=='__main__':main()
