@@ -7,7 +7,7 @@ ENDPOINT='https://api.heigit.org/openrouteservice/v2/isochrones/driving-car'
 RANGE_SECONDS=30*60
 MIN_REQUEST_INTERVAL=3.4
 MAX_RETRIES=8
-EXPECTED_CENTERS=391
+EXPECTED_CENTERS=390
 
 if not API_KEY:
     raise SystemExit('ORS_API_KEY fehlt. Bitte als GitHub Actions Secret anlegen.')
@@ -34,7 +34,6 @@ def bu_type(v):
     if x=='mixed': return 'Mixed'
     if x=='heavy': return 'Heavy'
     if x=='light': return 'Light'
-    # tolerate harmless source additions while keeping BU semantics explicit
     if 'mixed' in x or ('light' in x and 'heavy' in x): return 'Mixed'
     if 'heavy' in x: return 'Heavy'
     if 'light' in x: return 'Light'
