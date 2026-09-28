@@ -1,0 +1,61 @@
+name: Franchise-Center aus Google Sheet synchronisieren
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 * * * *"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: center-sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Google Sheet als daten.csv laden
+        env:
+          SHEET_ID: 1b7teC32nPUSmsSyGCreHuTC5WMu3ebienvEEuQnHcc0
+        run: |
+          set -euo pipefail
+          URL="https://docs.google.com/spreadsheets/d/${SHEET_ID}/export?format=csv"
+          curl --fail --location --retry 4 --retry-delay 5 --connect-timeout 20 --max-time 120 "$URL" -o daten.csv.new
+          test -s daten.csv.new
+          python - <<'PY'
+          import csv, sys
+          p='daten.csv.new'
+          with open(p, encoding='utf-8-sig', newline='') as f:
+              rows=list(csv.reader(f))
+          if len(rows) < 2:
+              raise SystemExit('Export enthält keine Center-Daten')
+          print(f'Google-Sheet-Export geladen: {len(rows)-1} Datenzeilen')
+          PY
+          mv daten.csv.new daten.csv
+
+      - name: Änderungen committen
+        id: changes
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add daten.csv
+          if git diff --cached --quiet; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "Keine Änderungen im Leistungsverzeichnis."
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            git commit -m "Sync franchise centers from Google Sheet"
+            git push
+          fi
+
+      - name: Hinweis
+        run: |
+          if [ "${{ steps.changes.outputs.changed }}" = "true" ]; then
+            echo "daten.csv wurde aktualisiert. Der bestehende Isochronen-Workflow startet durch den Push automatisch."
+          else
+            echo "daten.csv ist bereits aktuell."
+          fi
