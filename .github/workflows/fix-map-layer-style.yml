@@ -1,0 +1,33 @@
+name: Fix map outline styling
+on:
+  push:
+    paths:
+      - '.github/workflows/fix-map-layer-style.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Remove colored analysis outline
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p = Path('index.html')
+          s = p.read_text(encoding='utf-8')
+          old = "style:{color:'#ef4444',weight:2,fillColor:'#ef4444',fillOpacity:.08}"
+          new = "style:{color:'transparent',weight:0,fillColor:'#ef4444',fillOpacity:.08}"
+          if old not in s:
+              raise SystemExit('Expected analysis-layer style not found')
+          p.write_text(s.replace(old,new,1),encoding='utf-8')
+          PY
+      - name: Commit fix
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add index.html
+          git commit -m "Remove colored analysis polygon outline"
+          git push
