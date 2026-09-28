@@ -1,0 +1,107 @@
+{
+  "level": {
+    "typ": 3,
+    "label": "Kreis / kreisfreie Stadt"
+  },
+  "metrics": {
+    "popDensity": {
+      "code": "AI002-1-5",
+      "field": "AI0201",
+      "label": "Bevölkerungsdichte",
+      "unit": "EW/km²",
+      "year": 2024,
+      "level": 3,
+      "levelLabel": "Kreis / kreisfreie Stadt",
+      "yearsTried": [
+        2024
+      ],
+      "weight": 0.3
+    },
+    "pkwDensity": {
+      "code": "AI013-1",
+      "field": "AI1301",
+      "label": "Pkw-Dichte",
+      "unit": "Pkw je 1.000 EW",
+      "year": 2025,
+      "level": 3,
+      "levelLabel": "Kreis / kreisfreie Stadt",
+      "yearsTried": [
+        2026,
+        2025
+      ],
+      "weight": 0.25
+    },
+    "income": {
+      "code": "AI016-1",
+      "field": "AI1601",
+      "label": "Verfügbares Einkommen",
+      "unit": "€ je Einwohner",
+      "year": 2022,
+      "level": 3,
+      "levelLabel": "Kreis / kreisfreie Stadt",
+      "yearsTried": [
+        2022
+      ],
+      "weight": 0.25
+    },
+    "workDensity": {
+      "code": "AI007-1",
+      "field": "AI0701",
+      "label": "Arbeitsplatzdichte",
+      "unit": "je 1.000 EW",
+      "year": 2024,
+      "level": 3,
+      "levelLabel": "Kreis / kreisfreie Stadt",
+      "yearsTried": [
+        2024
+      ],
+      "weight": 0.2
+    }
+  },
+  "audit": {
+    "popDensity": {
+      "rows": 400,
+      "geometryMatches": 397,
+      "missingGeometry": 3,
+      "missingData": 5,
+      "min": 34.7,
+      "median": 205.3,
+      "max": 4843.9,
+      "plausibilityWarnings": 0,
+      "warningExamples": []
+    },
+    "pkwDensity": {
+      "rows": 400,
+      "geometryMatches": 397,
+      "missingGeometry": 3,
+      "missingData": 5,
+      "min": 334.5,
+      "median": 638.1500000000001,
+      "max": 955.9,
+      "plausibilityWarnings": 0,
+      "warningExamples": []
+    },
+    "income": {
+      "rows": 400,
+      "geometryMatches": 397,
+      "missingGeometry": 3,
+      "missingData": 5,
+      "min": 18522.0,
+      "median": 25504.5,
+      "max": 40205.0,
+      "plausibilityWarnings": 0,
+      "warningExamples": []
+    },
+    "workDensity": {
+      "rows": 400,
+      "geometryMatches": 397,
+      "missingGeometry": 3,
+      "missingData": 5,
+      "min": 438.8,
+      "median": 798.4,
+      "max": 1956.8,
+      "plausibilityWarnings": 0,
+      "warningExamples": []
+    }
+  }
+}
