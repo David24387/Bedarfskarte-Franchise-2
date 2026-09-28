@@ -1,8 +1,4 @@
 {
-  "level": {
-    "typ": 3,
-    "label": "Kreis / kreisfreie Stadt"
-  },
   "metrics": {
     "popDensity": {
       "code": "AI002-1-5",
@@ -10,12 +6,15 @@
       "label": "Bevölkerungsdichte",
       "unit": "EW/km²",
       "year": 2024,
-      "level": 3,
-      "levelLabel": "Kreis / kreisfreie Stadt",
-      "yearsTried": [
-        2024
-      ],
-      "weight": 0.3
+      "level": 5,
+      "levelLabel": "Gemeinde / Verbandsgemeinde",
+      "weight": 0.3,
+      "attempts": [
+        {
+          "level": 5,
+          "year": 2024
+        }
+      ]
     },
     "pkwDensity": {
       "code": "AI013-1",
@@ -25,24 +24,61 @@
       "year": 2025,
       "level": 3,
       "levelLabel": "Kreis / kreisfreie Stadt",
-      "yearsTried": [
-        2026,
-        2025
-      ],
-      "weight": 0.25
+      "weight": 0.25,
+      "attempts": [
+        {
+          "level": 5,
+          "year": 2026
+        },
+        {
+          "level": 5,
+          "year": 2025
+        },
+        {
+          "level": 5,
+          "year": 2024
+        },
+        {
+          "level": 3,
+          "year": 2026
+        },
+        {
+          "level": 3,
+          "year": 2025
+        }
+      ]
     },
     "income": {
       "code": "AI016-1",
       "field": "AI1601",
       "label": "Verfügbares Einkommen",
       "unit": "€ je Einwohner",
-      "year": 2022,
+      "year": 2021,
       "level": 3,
       "levelLabel": "Kreis / kreisfreie Stadt",
-      "yearsTried": [
-        2022
-      ],
-      "weight": 0.25
+      "weight": 0.25,
+      "attempts": [
+        {
+          "level": 5,
+          "year": 2022
+        },
+        {
+          "level": 5,
+          "year": 2021
+        },
+        {
+          "level": 5,
+          "year": 2020
+        },
+        {
+          "level": 3,
+          "year": 2022
+        },
+        {
+          "level": 3,
+          "year": 2021
+        }
+      ]
     },
     "workDensity": {
       "code": "AI007-1",
@@ -52,56 +88,60 @@
       "year": 2024,
       "level": 3,
       "levelLabel": "Kreis / kreisfreie Stadt",
-      "yearsTried": [
-        2024
-      ],
-      "weight": 0.2
+      "weight": 0.2,
+      "attempts": [
+        {
+          "level": 5,
+          "year": 2024
+        },
+        {
+          "level": 5,
+          "year": 2023
+        },
+        {
+          "level": 5,
+          "year": 2022
+        },
+        {
+          "level": 3,
+          "year": 2024
+        }
+      ]
     }
   },
   "audit": {
     "popDensity": {
-      "rows": 400,
-      "geometryMatches": 397,
-      "missingGeometry": 3,
-      "missingData": 5,
-      "min": 34.7,
-      "median": 205.3,
+      "rows": 10754,
+      "min": 1.2,
+      "median": 96.15,
       "max": 4843.9,
-      "plausibilityWarnings": 0,
-      "warningExamples": []
+      "level": 5,
+      "year": 2024
     },
     "pkwDensity": {
       "rows": 400,
-      "geometryMatches": 397,
-      "missingGeometry": 3,
-      "missingData": 5,
       "min": 334.5,
       "median": 638.1500000000001,
       "max": 955.9,
-      "plausibilityWarnings": 0,
-      "warningExamples": []
+      "level": 3,
+      "year": 2025
     },
     "income": {
       "rows": 400,
-      "geometryMatches": 397,
-      "missingGeometry": 3,
-      "missingData": 5,
-      "min": 18522.0,
-      "median": 25504.5,
-      "max": 40205.0,
-      "plausibilityWarnings": 0,
-      "warningExamples": []
+      "min": 18028.0,
+      "median": 24212.0,
+      "max": 37770.0,
+      "level": 3,
+      "year": 2021
     },
     "workDensity": {
       "rows": 400,
-      "geometryMatches": 397,
-      "missingGeometry": 3,
-      "missingData": 5,
       "min": 438.8,
       "median": 798.4,
       "max": 1956.8,
-      "plausibilityWarnings": 0,
-      "warningExamples": []
+      "level": 3,
+      "year": 2024
     }
-  }
+  },
+  "fileSizeMB": 19.19
 }
