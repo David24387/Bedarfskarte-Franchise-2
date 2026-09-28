@@ -1,0 +1,60 @@
+name: Fix BU detection from source column
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/fix-bu-detection.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Make BU detection use the BU column directly
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import re
+          p=Path('index.html')
+          s=p.read_text(encoding='utf-8')
+          original=s
+
+          # Locate the Papa.parse row mapping and normalize BU directly from the CSV BU field.
+          # Supports common existing spellings/spacing without changing map styling or other logic.
+          patterns = [
+            r"(bu\s*:\s*)([^,}\n]+)",
+            r"(BU\s*:\s*)([^,}\n]+)",
+          ]
+          replacement = r"\1((r['BU'] || r[' BU'] || '').trim().toLowerCase() === 'heavy' ? 'Heavy' : ((r['BU'] || r[' BU'] || '').trim().toLowerCase() === 'mixed' ? 'Mixed' : ((r['BU'] || r[' BU'] || '').trim().toLowerCase() === 'light' ? 'Light' : (r['BU'] || r[' BU'] || '').trim())))"
+
+          changed=False
+          for pat in patterns:
+            # Only replace a BU property in the center row object if its current expression refers to row r.
+            for m in list(re.finditer(pat,s)):
+              expr=m.group(2)
+              if 'r[' in expr or 'r.' in expr:
+                s=s[:m.start()] + re.sub(pat,replacement,s[m.start():],count=1) + ''
+                changed=True
+                break
+            if changed: break
+
+          if not changed:
+            # More targeted fallback: replace known direct BU normalizers/functions at their call site.
+            candidates = re.findall(r"(?:bu|BU)\s*:\s*([^,}\n]+)", s)
+            raise SystemExit('BU mapping not safely identified. Candidates: '+repr(candidates[:10]))
+
+          if s==original:
+            raise SystemExit('No change made')
+          p.write_text(s,encoding='utf-8')
+          PY
+      - name: Commit fix
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add index.html
+          git commit -m "Use BU source column directly for center classification"
+          git push
