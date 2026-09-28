@@ -1,0 +1,78 @@
+name: Apply map updates
+on:
+  push:
+    paths:
+      - '.github/workflows/apply-map-updates.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Patch map without changing analysis logic
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p=Path('index.html')
+          s=p.read_text(encoding='utf-8')
+
+          replacements=[
+            ('.orange{background:repeating-linear-gradient(45deg,#f9731633 0 4px,#f97316 4px 6px)}',
+             '.orange{background:repeating-linear-gradient(45deg,#8b5cf633 0 4px,#7c3aed 4px 6px)}'),
+            ('<span class="sw orange"></span>Orange = Heavy fehlt',
+             '<span class="sw orange"></span>Violett = Heavy fehlt'),
+            ("s==='LKW/Heavy Bedarf'?['rgba(249,115,22,.22)','rgba(234,88,12,.62)',1]",
+             "s==='LKW/Heavy Bedarf'?['rgba(139,92,246,.22)','rgba(124,58,237,.68)',1]"),
+            ('<div class="group"><label><input id="hotspots" type="checkbox" checked><span class="sw gold"></span>Gold = Top-20-%-Lücken nach Marktpotenzial</label></div>',
+             '<div id="internalLogin" class="note" style="margin-top:10px"><b>Interne Potenzialansicht</b><br><input id="internalUser" class="search" style="margin:7px 0 5px;padding:7px" placeholder="Benutzername"><input id="internalPass" class="search" style="margin:0 0 7px;padding:7px" type="password" placeholder="Passwort"><button id="internalBtn" type="button" style="width:100%;padding:7px;border:0;border-radius:7px;background:#1e293b;color:white;font-weight:700;cursor:pointer">Freischalten</button><div id="internalMsg" style="margin-top:5px"></div></div><div id="hotspotGroup" class="group" style="display:none"><label><input id="hotspots" type="checkbox"><span class="sw gold"></span>Gold = Top-20-%-Lücken nach Marktpotenzial</label></div>')
+          ]
+          for old,new in replacements:
+              if old not in s:
+                  raise SystemExit('Expected snippet not found: '+old[:100])
+              s=s.replace(old,new,1)
+
+          auth="""
+// Interne Potenzialansicht: UI-Sperre fuer goldene Hotspots.
+// Hinweis: Auf statischem GitHub Pages ist dies keine kryptografisch sichere Zugriffskontrolle.
+(function(){
+  const btn=document.getElementById('internalBtn');
+  if(!btn)return;
+  btn.addEventListener('click',function(){
+    const u=document.getElementById('internalUser').value;
+    const pw=document.getElementById('internalPass').value;
+    const msg=document.getElementById('internalMsg');
+    if(u==='Franchise' && pw==='Franchise2026'){
+      document.getElementById('internalLogin').style.display='none';
+      document.getElementById('hotspotGroup').style.display='block';
+      const cb=document.getElementById('hotspots');
+      cb.checked=true;
+      cb.dispatchEvent(new Event('change',{bubbles:true}));
+    } else {
+      msg.textContent='Benutzername oder Passwort falsch.';
+      msg.style.color='#b91c1c';
+    }
+  });
+})();
+"""
+          marker='init();</script>'
+          if marker not in s:
+              raise SystemExit('init marker not found')
+          s=s.replace(marker,auth+'\n'+marker,1)
+          p.write_text(s,encoding='utf-8')
+          PY
+
+      - name: Commit map updates
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add index.html
+          if git diff --cached --quiet; then
+            echo "No changes"
+          else
+            git commit -m "Improve demand colors and gate internal potential layer"
+            git push
+          fi
