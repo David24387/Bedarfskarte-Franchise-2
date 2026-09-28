@@ -142,9 +142,15 @@
   "mapRegions": 10754,
   "missingJoins": {
     "popDensity": 0,
+    "pkwDensity": 0,
+    "income": 0,
+    "workDensity": 0
+  },
+  "spatialJoinFixes": {
+    "popDensity": 0,
     "pkwDensity": 106,
     "income": 106,
     "workDensity": 106
   },
-  "fileSizeMB": 32.81
+  "fileSizeMB": 35.65
 }
