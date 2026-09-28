@@ -13,48 +13,46 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Change Light demand from blue to yellow
+      - name: Rename visible Center labels to Standorte
         run: |
           python - <<'PY'
           from pathlib import Path
           p=Path('index.html')
           s=p.read_text(encoding='utf-8')
           replacements=[
-            ('.blue{background:repeating-linear-gradient(-45deg,#3b82f633 0 4px,#3b82f6 4px 6px)}',
-             '.yellow{background:repeating-linear-gradient(-45deg,#facc1538 0 4px,#eab308 4px 6px)}'),
-            ('<span class="sw blue"></span>Blau = Light fehlt',
-             '<span class="sw yellow"></span>Gelb = Light fehlt'),
-            ("['rgba(59,130,246,.20)','rgba(37,99,235,.62)',-1]",
-             "['rgba(250,204,21,.25)','rgba(202,138,4,.78)',-1]"),
-            ("headline='🟦 <b>LIGHT-BEDARF:</b><br>Innerhalb von 30 Minuten Fahrzeit ist keine Light-Abdeckung vorhanden.';col='#3b82f6'",
-             "headline='🟨 <b>LIGHT-BEDARF:</b><br>Innerhalb von 30 Minuten Fahrzeit ist keine Light-Abdeckung vorhanden.';col='#ca8a04'")
+            ('Center / BU','Standorte / BU'),
+            ('Alle Center anzeigen','Alle Standorte anzeigen'),
+            (' Fahrzeitgebiete geladen · lade Center…',' Fahrzeitgebiete geladen · lade Standorte…'),
+            (' Center · Mixed ',' Standorte · Mixed '),
+            ("${c.ort||'Center'} – 30-Minuten-Fahrzeit","${c.ort||'Standort'} – 30-Minuten-Fahrzeit"),
+            ('eines passenden Centers liegt','eines passenden Standorts liegt'),
+            ('Bedarfsfläche oder Center für den','Bedarfsfläche oder Standort für den'),
+            ('Center im 30-Minuten-Gebiet','Standorte im 30-Minuten-Gebiet'),
+            ('Center in Fahrzeit','Standorte in Fahrzeit'),
+            (' Center</span>',' Standorte</span>')
           ]
           changed=0
           for old,new in replacements:
               if old in s:
-                  s=s.replace(old,new,1); changed+=1
-              elif new in s:
-                  print('Bereits umgesetzt:',new[:60])
-              else:
-                  raise SystemExit('Erwarteter Light-Farbbaustein nicht gefunden: '+old[:100])
-          if changed:
-              p.write_text(s,encoding='utf-8')
-          print(f'{changed} Light-Farbbausteine aktualisiert.')
+                  s=s.replace(old,new)
+                  changed+=1
+          # Counter oben: z. B. 390/390 Center · 30 Min. -> Standorte
+          s=s.replace("${shown}/${centers.length} Center · 30 Min.","${shown}/${centers.length} Standorte · 30 Min.")
+          p.write_text(s,encoding='utf-8')
+          print(f'{changed} sichtbare Center-Bezeichnungen auf Standorte geändert.')
           PY
-      - name: Verify FRA and ERM demand logic
+      - name: Verify visible terminology
         run: |
           python - <<'PY'
           from pathlib import Path
           s=Path('index.html').read_text(encoding='utf-8')
-          # Regionaler Bedarf basiert auf allen Features in isochronen.json.
-          # Die Features werden nicht nach FRA/ERM gefiltert; daher werden beide Netze berücksichtigt,
-          # sobald der 390-Center-Isochronenlauf die neue Datei committed.
-          required=["for(const f of iso)","f.properties.buType","coverage(lat,lng)"]
+          required=['Standorte / BU','Alle Standorte anzeigen','Standorte · Mixed']
           missing=[x for x in required if x not in s]
-          if missing: raise SystemExit('Coverage-Logik unerwartet verändert: '+str(missing))
-          print('Coverage nutzt alle Isochronen-Features ohne FRA-only Filter.')
+          if missing:
+              raise SystemExit('Standort-Bezeichnungen fehlen: '+str(missing))
+          print('Standort-Bezeichnungen erfolgreich geprüft.')
           PY
-      - name: Commit map updates
+      - name: Commit map terminology update
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
@@ -62,6 +60,6 @@ jobs:
           if git diff --cached --quiet; then
             echo "Keine Änderungen nötig"
           else
-            git commit -m "Change Light demand zones from blue to yellow"
+            git commit -m "Rename Center labels to Standorte"
             git push
           fi
