@@ -1,0 +1,44 @@
+name: Franchise-Center aus Google Sheet synchronisieren
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 * * * *"
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Veröffentlichtes Google Sheet als CSV laden
+        run: |
+          set -euo pipefail
+          URL="https://docs.google.com/spreadsheets/d/1b7teC32nPUSmsSyGCreHuTC5WMu3ebienvEEuQnHcc0/export?format=csv"
+          curl --fail --location --retry 4 --retry-delay 3 "$URL" -o daten-neu.csv
+          test -s daten-neu.csv
+          python - <<'PY'
+          import csv
+          from pathlib import Path
+          p=Path('daten-neu.csv')
+          rows=list(csv.reader(p.open(encoding='utf-8-sig', newline='')))
+          if len(rows) < 2:
+              raise SystemExit('Google Sheet enthält keine ausreichenden Daten')
+          print(f'{len(rows)-1} Datenzeilen aus Google Sheet geladen')
+          PY
+          mv daten-neu.csv daten.csv
+
+      - name: Nur bei Änderungen committen
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add daten.csv
+          if git diff --cached --quiet; then
+            echo "Keine Änderungen im Google Sheet."
+          else
+            git commit -m "Sync franchise centers from Google Sheet"
+            git push
+          fi
