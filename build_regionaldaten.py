@@ -12,10 +12,9 @@ METRICS={
  "workDensity":{"code":"AI007-1","field":"AI0701","weight":.20,"label":"Arbeitsplatzdichte","unit":"je 1.000 EW","valid":(0,5000)},
 }
 LEVEL_LABEL={5:"Gemeinde / Verbandsgemeinde",3:"Kreis / kreisfreie Stadt"}
-UA={"User-Agent":"Euromaster-Franchise-Potential/3.3"}
+UA={"User-Agent":"Euromaster-Franchise-Potential/3.4"}
 TIMEOUT=25; PAGE_SIZE=1000; MAX_PAGES=20
-GEOMETRY_PRECISION=4
-MAX_ALLOWABLE_OFFSET=0.001
+GEOMETRY_PRECISION=4; MAX_ALLOWABLE_OFFSET=0.001
 
 def get_json(url,timeout=TIMEOUT):
  req=urllib.request.Request(url,headers=UA)
@@ -48,29 +47,21 @@ def layer_def(code,year,level):
  return {"source":{"dataSource":{"geometryType":"esriGeometryPolygon","workspaceId":"gdb","query":sql,"oidFields":"id","spatialReference":{"wkid":25832},"type":"queryTable"},"type":"dataLayer"}}
 
 def request_page(code,field,year,level,offset,geometry):
- params={'layer':json.dumps(layer_def(code,year,level),separators=(',',':')),'f':'json',
-         'outFields':f'ags,gen,{field},jahr2','returnGeometry':'true' if geometry else 'false',
-         'outSR':'4326','spatialRel':'esriSpatialRelIntersects','where':'1=1',
-         'resultOffset':str(offset),'resultRecordCount':str(PAGE_SIZE),'orderByFields':'ags'}
+ params={'layer':json.dumps(layer_def(code,year,level),separators=(',',':')),'f':'json','outFields':f'ags,gen,{field},jahr2','returnGeometry':'true' if geometry else 'false','outSR':'4326','spatialRel':'esriSpatialRelIntersects','where':'1=1','resultOffset':str(offset),'resultRecordCount':str(PAGE_SIZE),'orderByFields':'ags'}
  if geometry:
-  params['geometryPrecision']=str(GEOMETRY_PRECISION)
-  params['maxAllowableOffset']=str(MAX_ALLOWABLE_OFFSET)
- url=QUERY+'?'+urllib.parse.urlencode(params)
- return get_json(url)
+  params['geometryPrecision']=str(GEOMETRY_PRECISION);params['maxAllowableOffset']=str(MAX_ALLOWABLE_OFFSET)
+ return get_json(QUERY+'?'+urllib.parse.urlencode(params))
 
 def query(code,field,year,level,valid_range):
  try:probe=request_page(code,field,year,level,0,False)
- except Exception as e:
-  print(f'WARN probe {code} {year} level {level}: {type(e).__name__}: {e}',flush=True);return []
- if probe.get('error'):print('WARN API',code,year,level,probe['error'],flush=True);return []
- if not any(attr(f.get('attributes',{}),field) not in (None,'') for f in (probe.get('features') or [])):
-  print(code,year,'level',level,': no usable probe rows',flush=True);return []
+ except Exception as e:print(f'WARN probe {code} {year} level {level}: {type(e).__name__}: {e}',flush=True);return []
+ if probe.get('error'):return []
+ if not any(attr(f.get('attributes',{}),field) not in (None,'') for f in (probe.get('features') or [])):return []
  out=[];offset=0;invalid=0;lo,hi=valid_range
  for page in range(MAX_PAGES):
   try:d=request_page(code,field,year,level,offset,True)
-  except Exception as e:
-   print(f'WARN page {page+1} {code} {year} level {level}: {type(e).__name__}: {e}',flush=True);return []
-  if d.get('error'):print('WARN API page',code,year,level,d['error'],flush=True);return []
+  except Exception as e:print(f'WARN page {page+1} {code}: {e}',flush=True);return []
+  if d.get('error'):return []
   fs=d.get('features') or []
   for f in fs:
    a=f.get('attributes',{});raw=attr(a,field)
@@ -78,8 +69,7 @@ def query(code,field,year,level,valid_range):
    except (TypeError,ValueError):continue
    if not math.isfinite(v) or not (lo<=v<=hi):invalid+=1;continue
    rings=(f.get('geometry') or {}).get('rings')
-   if not rings:continue
-   out.append({'ags':ags(attr(a,'ags'),level),'name':str(attr(a,'gen') or '').strip(),'value':v,'geometry':{'type':'Polygon','coordinates':rings}})
+   if rings:out.append({'ags':ags(attr(a,'ags'),level),'name':str(attr(a,'gen') or '').strip(),'value':v,'geometry':{'type':'Polygon','coordinates':rings}})
   print(code,year,'level',level,'page',page+1,':',len(fs),'rows; valid',len(out),'invalid',invalid,flush=True)
   if len(fs)<PAGE_SIZE:break
   offset+=len(fs)
@@ -90,14 +80,13 @@ def newest_finest(code,field,item,valid_range):
  attempts=[]
  for level in (5,3):
   for year in years(item)[:3]:
-   attempts.append({'level':level,'year':year});started=time.monotonic();data=query(code,field,year,level,valid_range)
-   print('attempt seconds:',round(time.monotonic()-started,1),flush=True)
+   attempts.append({'level':level,'year':year});started=time.monotonic();data=query(code,field,year,level,valid_range);print('attempt seconds:',round(time.monotonic()-started,1),flush=True)
    if len(data)>=(1000 if level==5 else 350):return level,year,data,attempts
  return None,None,[],attempts
 
 def add_percentiles(data):
- vals=sorted(x['value'] for x in data);n=len(vals)
  import bisect
+ vals=sorted(x['value'] for x in data);n=len(vals)
  for x in data:x['pct']=bisect.bisect_right(vals,x['value'])/n
 
 def round_geometry(g,precision=4):
@@ -107,61 +96,84 @@ def round_geometry(g,precision=4):
   return x
  return {'type':g.get('type'),'coordinates':rec(g.get('coordinates',[]))}
 
-def lookup_for_metric(rows,level):
- return {x['ags']:x for x in rows if x.get('ags')}
+def point_in_ring(x,y,ring):
+ inside=False;j=len(ring)-1
+ for i in range(len(ring)):
+  xi,yi=ring[i];xj,yj=ring[j]
+  if ((yi>y)!=(yj>y)) and x < (xj-xi)*(y-yi)/(yj-yi or 1e-30)+xi:inside=not inside
+  j=i
+ return inside
+
+def point_in_geom(x,y,g):
+ coords=g.get('coordinates',[])
+ polys=[coords] if g.get('type')=='Polygon' else coords if g.get('type')=='MultiPolygon' else []
+ for poly in polys:
+  if poly and point_in_ring(x,y,poly[0]) and not any(point_in_ring(x,y,h) for h in poly[1:]):return True
+ return False
+
+def representative_point(g):
+ coords=g.get('coordinates',[]);polys=[coords] if g.get('type')=='Polygon' else coords if g.get('type')=='MultiPolygon' else []
+ pts=[]
+ for poly in polys:
+  if poly and poly[0]:pts.extend(poly[0][:-1] or poly[0])
+ if not pts:return None
+ return (sum(p[0] for p in pts)/len(pts),sum(p[1] for p in pts)/len(pts))
+
+def spatial_row(base_geom,rows):
+ p=representative_point(base_geom)
+ if not p:return None
+ x,y=p
+ for r in rows:
+  if point_in_geom(x,y,r['geometry']):return r
+ # centroid can fall outside concave polygons; try a real boundary vertex as a robust fallback
+ coords=base_geom.get('coordinates',[]);polys=[coords] if base_geom.get('type')=='Polygon' else coords if base_geom.get('type')=='MultiPolygon' else []
+ for poly in polys:
+  if poly and poly[0]:
+   x,y=poly[0][0]
+   for r in rows:
+    if point_in_geom(x,y,r['geometry']):return r
+ return None
 
 def build_regions(metric_layers,meta):
- # The map already consumes a flat `regions` array. Population density is the
- # finest available layer and therefore defines the displayed local geometry.
- # Metrics only available at district level are joined via the first 5 AGS digits.
- base=metric_layers['popDensity']
- lookups={k:lookup_for_metric(v,meta[k]['level']) for k,v in metric_layers.items()}
- regions=[];missing={k:0 for k in METRICS}
+ base=metric_layers['popDensity'];lookups={k:{x['ags']:x for x in v if x.get('ags')} for k,v in metric_layers.items()}
+ regions=[];missing={k:0 for k in METRICS};spatial_fixed={k:0 for k in METRICS}
  for b in base:
-  aid=b.get('ags',''); values={}; pcts={}; levels={}
+  aid=b.get('ags','');values={};pcts={};levels={};sources={}
   for key in METRICS:
-   level=meta[key]['level']
-   key_id=aid if level==5 else aid[:5]
-   row=lookups[key].get(key_id)
-   if row:
-    values[key]=row['value'];pcts[key]=row['pct'];levels[key]=meta[key]['levelLabel']
-   else:
-    values[key]=None;pcts[key]=None;levels[key]=meta[key]['levelLabel'];missing[key]+=1
-  available=[(METRICS[k]['weight'],pcts[k]) for k in METRICS if pcts[k] is not None]
-  weight_sum=sum(w for w,_ in available)
-  score=round(100*sum(w*p for w,p in available)/weight_sum) if weight_sum else None
-  regions.append({
-   'ags':aid,'name':b.get('name',''),'geometry':round_geometry(b['geometry']),
-   'score':score,'popDensity':values['popDensity'],'pkwDensity':values['pkwDensity'],
-   'income':values['income'],'workDensity':values['workDensity'],'dataLevels':levels
-  })
- print('map regions:',len(regions),'missing joins:',missing,flush=True)
- return regions,missing
+   level=meta[key]['level'];key_id=aid if level==5 else aid[:5];row=lookups[key].get(key_id);method='AGS'
+   if not row and level==3:
+    row=spatial_row(b['geometry'],metric_layers[key]);method='spatial' if row else 'missing'
+    if row:spatial_fixed[key]+=1
+   if row:values[key]=row['value'];pcts[key]=row['pct'];sources[key]={'ags':row['ags'],'name':row.get('name',''),'join':method}
+   else:values[key]=None;pcts[key]=None;sources[key]={'join':'missing'};missing[key]+=1
+   levels[key]=meta[key]['levelLabel']
+  available=[(METRICS[k]['weight'],pcts[k]) for k in METRICS if pcts[k] is not None];ws=sum(w for w,_ in available)
+  score=round(100*sum(w*p for w,p in available)/ws) if ws else None
+  regions.append({'ags':aid,'name':b.get('name',''),'geometry':round_geometry(b['geometry']),'score':score,'popDensity':values['popDensity'],'pkwDensity':values['pkwDensity'],'income':values['income'],'workDensity':values['workDensity'],'dataLevels':levels,'dataSources':sources})
+ print('map regions:',len(regions),'missing joins:',missing,'spatial fixes:',spatial_fixed,flush=True)
+ return regions,missing,spatial_fixed
 
 def main():
  cat=index_catalog(get_json(CATALOG));metric_layers={};meta={};audit={}
  for key,m in METRICS.items():
   item=cat.get(m['code'])
   if not item:raise RuntimeError('Missing catalog indicator '+m['code'])
-  print('\n===',key,m['code'],'===',flush=True)
-  level,year,data,attempts=newest_finest(m['code'],m['field'],item,m['valid'])
+  print('\n===',key,m['code'],'===',flush=True);level,year,data,attempts=newest_finest(m['code'],m['field'],item,m['valid'])
   if not data:raise RuntimeError('No usable data for '+key)
   add_percentiles(data);vals=[x['value'] for x in data];metric_layers[key]=data
   meta[key]={'code':m['code'],'field':m['field'],'label':m['label'],'unit':m['unit'],'year':year,'level':level,'levelLabel':LEVEL_LABEL[level],'weight':m['weight'],'attempts':attempts}
   audit[key]={'rows':len(data),'min':min(vals),'median':statistics.median(vals),'max':max(vals),'level':level,'year':year}
-
- regions,missing_joins=build_regions(metric_layers,meta)
+ regions,missing_joins,spatial_fixed=build_regions(metric_layers,meta)
  geo=get_json(COUNTIES);districts=[]
  for f in geo.get('features',[]):
   aid=ags(f.get('id') or (f.get('properties') or {}).get('id'),3)
   if aid:districts.append({'ags':aid,'name':(f.get('properties') or {}).get('name',''),'geometry':round_geometry(f['geometry'])})
- payload={'source':'Regionalatlas Deutschland – Statistische Ämter des Bundes und der Länder','methodology':'Each KPI uses the finest usable official Regionalatlas geography. The web-map regions use the finest population-density geometry; district-level KPIs are joined by AGS and clearly retain their source level. Score is a weighted percentile score over all available KPIs. Disposable income is not commercial purchasing power.','metrics':meta,'audit':audit,'regions':regions,'metricLayers':metric_layers,'districts':districts}
- raw=json.dumps(payload,ensure_ascii=False,separators=(',',':'))
- size=len(raw.encode('utf-8'))
- print('regionaldaten.json size:',round(size/1024/1024,2),'MB',flush=True)
+ payload={'source':'Regionalatlas Deutschland – Statistische Ämter des Bundes und der Länder','methodology':'Each KPI uses the finest usable official Regionalatlas geography. District KPIs are joined to local regions by AGS where possible and spatial containment otherwise; source region and join method are retained for auditability. Disposable income is not commercial purchasing power.','metrics':meta,'audit':audit,'regions':regions,'metricLayers':metric_layers,'districts':districts}
+ raw=json.dumps(payload,ensure_ascii=False,separators=(',',':'));size=len(raw.encode('utf-8'));print('regionaldaten.json size:',round(size/1024/1024,2),'MB',flush=True)
  if size>90*1024*1024:raise RuntimeError(f'regionaldaten.json still too large: {size/1024/1024:.1f} MB')
  Path('regionaldaten.json').write_text(raw,encoding='utf-8')
- Path('regionaldaten_audit.json').write_text(json.dumps({'metrics':meta,'audit':audit,'mapRegions':len(regions),'missingJoins':missing_joins,'fileSizeMB':round(size/1024/1024,2)},ensure_ascii=False,indent=2),encoding='utf-8')
+ Path('regionaldaten_audit.json').write_text(json.dumps({'metrics':meta,'audit':audit,'mapRegions':len(regions),'missingJoins':missing_joins,'spatialJoinFixes':spatial_fixed,'fileSizeMB':round(size/1024/1024,2)},ensure_ascii=False,indent=2),encoding='utf-8')
+ if any(missing_joins[k] for k in ('pkwDensity','income','workDensity')):raise RuntimeError('District KPI joins still incomplete: '+json.dumps(missing_joins))
  print('AUDIT OK',json.dumps(audit,ensure_ascii=False),flush=True)
 
 if __name__=='__main__':main()
