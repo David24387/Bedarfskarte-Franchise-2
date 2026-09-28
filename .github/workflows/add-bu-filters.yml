@@ -1,0 +1,63 @@
+name: BU-Filter Light Heavy Mixed hinzufügen
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/add-bu-filters.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Centerfilter ergänzen
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p=Path('index.html')
+          s=p.read_text(encoding='utf-8')
+          old='<div class="group"><label><input id="centers" type="checkbox" checked>Alle Center anzeigen</label></div>'
+          new='''<div class="group"><label><input id="centers" type="checkbox" checked>Alle Center anzeigen</label></div>
+<div class="group"><label><input class="bu-filter" value="Mixed" type="checkbox" checked><span class="dot" style="background:#10b981"></span>Mixed anzeigen</label></div>
+<div class="group"><label><input class="bu-filter" value="Light" type="checkbox" checked><span class="dot" style="background:#3b82f6"></span>Light anzeigen</label></div>
+<div class="group"><label><input class="bu-filter" value="Heavy" type="checkbox" checked><span class="dot" style="background:#f97316"></span>Heavy anzeigen</label></div>'''
+          if old not in s:
+              raise SystemExit('Center-Filterstelle nicht gefunden – keine Änderung vorgenommen')
+          s=s.replace(old,new,1)
+
+          # Vorhandene filter()-Funktion gezielt um BU-Sichtbarkeit erweitern.
+          import re
+          m=re.search(r'function filter\(\)\{.*?\n?\}',s,re.S)
+          if not m:
+              raise SystemExit('filter()-Funktion nicht gefunden – keine Änderung vorgenommen')
+          block=m.group(0)
+          if 'bu-filter' not in block:
+              # Marker-Sichtbarkeit wird weiterhin von der bestehenden Suche und dem Alle-Center-Schalter bestimmt;
+              # anschließend zusätzlich nach BU eingeschränkt.
+              pos=block.rfind('}')
+              extra="\nconst enabledBU=new Set([...document.querySelectorAll('.bu-filter:checked')].map(x=>x.value));markers.forEach(x=>{if(!enabledBU.has(x.c.buType))x.m.setStyle({opacity:0,fillOpacity:0}),x.m.options.interactive=false});"
+              block=block[:pos]+extra+block[pos:]
+              s=s[:m.start()]+block+s[m.end():]
+
+          # Events für neue Checkboxen: bestehende filter()-Logik erneut anwenden.
+          anchor="document.querySelectorAll('.demand').forEach"
+          idx=s.find(anchor)
+          if idx<0:
+              raise SystemExit('Event-Anker nicht gefunden – keine Änderung vorgenommen')
+          line="document.querySelectorAll('.bu-filter').forEach(x=>x.addEventListener('change',filter));\n"
+          if line not in s:
+              s=s[:idx]+line+s[idx:]
+
+          p.write_text(s,encoding='utf-8')
+          PY
+      - name: Commit
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add index.html
+          git commit -m "Add independent Light Heavy Mixed center filters"
+          git push
