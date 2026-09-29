@@ -1,0 +1,55 @@
+name: Fix Germany boundary clipping
+
+on:
+  push:
+    paths:
+      - '.github/workflows/fix-germany-boundary.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  fix-boundary:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Replace rough Germany polygon with accurate GeoJSON boundary
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import re, urllib.request
+
+          p = Path('index.html')
+          s = p.read_text(encoding='utf-8')
+
+          # Replace the old hand-drawn polygon with a boundary loaded before the map data.
+          s, n = re.subn(
+              r"const germany=\{type:'Feature'.*?\};\nconst \$=",
+              "let germany=null;\nconst $=",
+              s,
+              count=1,
+              flags=re.S,
+          )
+          if n != 1:
+              raise SystemExit('Could not find old Germany polygon')
+
+          old = "async function init(){map=L.map('map').setView([51.1657,10.4515],6);"
+          new = "async function init(){try{const gr=await fetch('https://raw.githubusercontent.com/isellsoap/deutschlandGeoJSON/main/1_deutschland/3_mittel.geo.json');if(!gr.ok)throw Error('Deutschland-Grenze konnte nicht geladen werden');const gj=await gr.json();germany=(gj.features&&gj.features[0])||gj}catch(e){status('❌ Deutschland-Grenze konnte nicht geladen werden: '+e.message);return}map=L.map('map').setView([51.1657,10.4515],6);"
+          if old not in s:
+              raise SystemExit('Could not find init function')
+          s = s.replace(old, new, 1)
+
+          p.write_text(s, encoding='utf-8')
+          PY
+      - name: Commit boundary fix
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add index.html
+          if git diff --cached --quiet; then
+            echo "No changes"
+          else
+            git commit -m "Use accurate Germany boundary for demand raster"
+            git push
+          fi
