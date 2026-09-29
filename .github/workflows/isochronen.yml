@@ -17,14 +17,30 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+
       - name: 30-Minuten-Isochronen erzeugen
+        id: build_isochrones
+        continue-on-error: true
         env:
           ORS_API_KEY: ${{ secrets.ORS_API_KEY }}
         run: python build_isochronen.py
-      - name: Isochronen committen
+
+      - name: Isochronen-Fortschritt immer committen
+        if: always()
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add isochronen.json
-          git diff --cached --quiet || git commit -m "Update 30-minute drive-time areas"
-          git push
+          if [ -f isochronen.json ]; then
+            git add isochronen.json
+            git diff --cached --quiet || git commit -m "Update 30-minute drive-time areas (including partial progress)"
+            git push
+          else
+            echo "Keine isochronen.json vorhanden – nichts zu committen."
+          fi
+
+      - name: Lauf als fehlgeschlagen markieren, falls Standorte offen sind
+        if: steps.build_isochrones.outcome == 'failure'
+        run: |
+          echo "Die Berechnung ist noch nicht vollständig. Der bis hierhin erfolgreiche Fortschritt wurde gespeichert."
+          echo "Beim nächsten Lauf werden vorhandene Fahrzeitgebiete aus isochronen.json als Cache verwendet und nur fehlende Standorte neu abgefragt."
+          exit 1
