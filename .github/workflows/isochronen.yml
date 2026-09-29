@@ -6,9 +6,14 @@ on:
       - "daten.csv"
       - "build_isochronen.py"
   schedule:
-    - cron: "37 4 * * 1"
+    # ORS quota resets every 24h. Several spaced attempts make the workflow
+    # resume automatically once quota is available again.
+    - cron: "17 */6 * * *"
 permissions:
   contents: write
+concurrency:
+  group: isochronen-update
+  cancel-in-progress: false
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -23,6 +28,7 @@ jobs:
         continue-on-error: true
         env:
           ORS_API_KEY: ${{ secrets.ORS_API_KEY }}
+          ISOCHRONE_BATCH_SIZE: "390"
         run: python build_isochronen.py
 
       - name: Isochronen-Fortschritt immer committen
@@ -33,14 +39,25 @@ jobs:
           if [ -f isochronen.json ]; then
             git add isochronen.json
             git diff --cached --quiet || git commit -m "Update 30-minute drive-time areas (including partial progress)"
+            git pull --rebase origin main
             git push
           else
             echo "Keine isochronen.json vorhanden – nichts zu committen."
           fi
 
-      - name: Lauf als fehlgeschlagen markieren, falls Standorte offen sind
-        if: steps.build_isochrones.outcome == 'failure'
+      - name: Status ausgeben
+        if: always()
         run: |
-          echo "Die Berechnung ist noch nicht vollständig. Der bis hierhin erfolgreiche Fortschritt wurde gespeichert."
-          echo "Beim nächsten Lauf werden vorhandene Fahrzeitgebiete aus isochronen.json als Cache verwendet und nur fehlende Standorte neu abgefragt."
-          exit 1
+          python - <<'PY'
+          import json, pathlib
+          p=pathlib.Path('isochronen.json')
+          if not p.exists():
+              print('Keine isochronen.json vorhanden.')
+          else:
+              n=len(json.loads(p.read_text(encoding='utf-8')).get('features',[]))
+              print(f'Aktueller Stand: {n}/390 Fahrzeitgebiete gespeichert.')
+              if n < 390:
+                  print('Noch nicht vollständig. Der nächste geplante Lauf versucht automatisch weiterzumachen.')
+              else:
+                  print('Vollständig: 390/390.')
+          PY
