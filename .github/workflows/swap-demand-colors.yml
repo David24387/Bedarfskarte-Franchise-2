@@ -1,0 +1,38 @@
+name: Swap Heavy and Light demand colors
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/swap-demand-colors.yml'
+permissions:
+  contents: write
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Swap Heavy and Light demand colors
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p=Path('index.html')
+          s=p.read_text(encoding='utf-8')
+          # Swap legend classes/text: Heavy becomes yellow, Light becomes violet.
+          s=s.replace('<span class="sw violet"></span>Violett = Heavy fehlt','<span class="sw yellow"></span>Gelb = Heavy fehlt')
+          s=s.replace('<span class="sw yellow"></span>Gelb = Light fehlt','<span class="sw violet"></span>Violett = Light fehlt')
+          # Swap actual rendered demand colors, preserving demand semantics and hatch direction.
+          old="s==='LKW/Heavy Bedarf'?['rgba(139,92,246,.22)','rgba(109,40,217,.72)',1]:['rgba(250,204,21,.25)','rgba(202,138,4,.78)',-1]"
+          new="s==='LKW/Heavy Bedarf'?['rgba(250,204,21,.25)','rgba(202,138,4,.78)',1]:['rgba(139,92,246,.22)','rgba(109,40,217,.72)',-1]"
+          if old not in s:
+              raise SystemExit('Demand color expression not found; refusing unsafe patch')
+          s=s.replace(old,new,1)
+          p.write_text(s,encoding='utf-8')
+          print('Heavy=yellow and Light=violet applied to legend and map rendering')
+          PY
+      - name: Commit
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add index.html
+          git diff --cached --quiet || git commit -m "Swap Heavy and Light demand colors"
+          git push
