@@ -12,6 +12,8 @@ BATCH_SIZE=int(os.environ.get('ISOCHRONE_BATCH_SIZE','25'))
 CACHE_FILE=Path('isochronen.json')
 
 if not API_KEY: raise SystemExit('ORS_API_KEY fehlt.')
+class QuotaExceeded(Exception): pass
+
 def norm(s): return (s or '').strip()
 def num(s):
     try: return float(norm(s).replace(',','.'))
@@ -42,11 +44,13 @@ def request_isochrone(lon,lat):
     body=json.dumps({'locations':[[lon,lat]],'range':[RANGE_SECONDS],'range_type':'time','location_type':'start'}).encode()
     last_error=None
     for attempt in range(1,MAX_RETRIES+1):
-        req=urllib.request.Request(ENDPOINT,data=body,headers={'Authorization':API_KEY,'Content-Type':'application/json','Accept':'application/geo+json','User-Agent':'Euromaster-Bedarfskarte/3.1'},method='POST')
+        req=urllib.request.Request(ENDPOINT,data=body,headers={'Authorization':API_KEY,'Content-Type':'application/json','Accept':'application/geo+json','User-Agent':'Euromaster-Bedarfskarte/3.2'},method='POST')
         try:
             with urllib.request.urlopen(req,timeout=45) as r: return json.load(r)
         except urllib.error.HTTPError as e:
-            last_error=f'ORS HTTP {e.code}: '+e.read().decode('utf-8','replace')[:300]
+            msg=e.read().decode('utf-8','replace')[:500]
+            if e.code==403 and 'quota exceeded' in msg.lower(): raise QuotaExceeded('ORS Tageskontingent ist ausgeschöpft.')
+            last_error=f'ORS HTTP {e.code}: {msg}'
             if e.code in (429,500,502,503,504) and attempt<MAX_RETRIES:
                 time.sleep(min(8.0*attempt,20.0)); continue
             break
@@ -61,8 +65,7 @@ def load_cache(centers):
     if not CACHE_FILE.exists(): return cache
     by_coord={coord_key(c['lat'],c['lng']):c for c in centers}
     try:
-        old=json.loads(CACHE_FILE.read_text(encoding='utf-8'))
-        old_features=old.get('features',[])
+        old=json.loads(CACHE_FILE.read_text(encoding='utf-8')); old_features=old.get('features',[])
         print(f'{len(old_features)} Features in vorhandener isochronen.json.',flush=True)
         for f in old_features:
             p=f.get('properties') or {}
@@ -70,7 +73,6 @@ def load_cache(centers):
                 lat=float(p.get('lat')); lng=float(p.get('lng')); net=norm(p.get('net'))
                 if net in ('01 - ERM','02 - FRA'):
                     c={'net':net,'lat':lat,'lng':lng}; cache[key_for(c)]=f; continue
-                # Legacy-Dateien hatten noch kein net. Exakt über Koordinaten dem heutigen Standort zuordnen.
                 current=by_coord.get(coord_key(lat,lng))
                 if current:
                     p.update({'net':current['net'],'buType':current['buType'],'name':current['name'],'minutes':30,'lat':current['lat'],'lng':current['lng']})
@@ -81,9 +83,7 @@ def load_cache(centers):
     return cache
 
 def write_output(features):
-    # Sicherheitsgurt: ein bestehender nicht-leerer Cache darf niemals durch eine leere Datei ersetzt werden.
-    if not features:
-        raise RuntimeError('SICHERHEITSABBRUCH: isochronen.json würde leer geschrieben.')
+    if not features: raise RuntimeError('SICHERHEITSABBRUCH: isochronen.json würde leer geschrieben.')
     out={'type':'FeatureCollection','properties':{'minutes':30,'profile':'driving-car','source':'openrouteservice / OpenStreetMap'},'features':features}
     CACHE_FILE.write_text(json.dumps(out,ensure_ascii=False,separators=(',',':')),encoding='utf-8')
 
@@ -104,9 +104,9 @@ def main():
     missing=[c for c in centers if key_for(c) not in cache]
     print(f'Aktuell vollständig: {len(cache)}/{EXPECTED_CENTERS}; offen: {len(missing)}.',flush=True)
     if not missing:
-        features=[cache[key_for(c)] for c in centers]; write_output(features); print('ERFOLG: 390/390 Fahrzeitgebiete.',flush=True); return
+        write_output([cache[key_for(c)] for c in centers]); print('ERFOLG: 390/390 Fahrzeitgebiete.',flush=True); return
 
-    todo=missing[:BATCH_SIZE]; print(f'Dieser Lauf bearbeitet maximal {len(todo)} fehlende Standorte.',flush=True); last_request_started=0.0
+    todo=missing[:BATCH_SIZE]; print(f'Dieser Lauf kann bis zu {len(todo)} fehlende Standorte ergänzen.',flush=True); last_request_started=0.0; quota_hit=False
     for pos,c in enumerate(todo,1):
         elapsed=time.monotonic()-last_request_started
         if last_request_started and elapsed<MIN_REQUEST_INTERVAL: time.sleep(MIN_REQUEST_INTERVAL-elapsed)
@@ -115,11 +115,15 @@ def main():
             data=request_isochrone(c['lng'],c['lat']); fs=data.get('features') or []
             if not fs: raise RuntimeError('Keine Isochrone zurückgegeben')
             f=fs[0]; f['properties']={'buType':c['buType'],'name':c['name'],'net':c['net'],'minutes':30,'lat':c['lat'],'lng':c['lng']}; cache[key_for(c)]=f
+        except QuotaExceeded as e:
+            print(f'QUOTA: {e} Lauf wird sofort beendet; vorhandener Fortschritt bleibt erhalten.',flush=True); quota_hit=True; break
         except Exception as first:
             try:
                 time.sleep(MIN_REQUEST_INTERVAL); data=request_isochrone(c['lng']+0.00015,c['lat']+0.00015); fs=data.get('features') or []
                 if not fs: raise RuntimeError('Keine Fallback-Isochrone')
                 f=fs[0]; f['properties']={'buType':c['buType'],'name':c['name'],'net':c['net'],'minutes':30,'lat':c['lat'],'lng':c['lng'],'routingFallback':True}; cache[key_for(c)]=f
+            except QuotaExceeded as e:
+                print(f'QUOTA: {e} Lauf wird sofort beendet; vorhandener Fortschritt bleibt erhalten.',flush=True); quota_hit=True; break
             except Exception as e: print(f'OFFEN: {c["name"]} – {e}',flush=True)
 
     features=[]
@@ -129,7 +133,8 @@ def main():
             f=cache[k]; f['properties'].update({'buType':c['buType'],'name':c['name'],'net':c['net'],'minutes':30,'lat':c['lat'],'lng':c['lng']}); features.append(f)
     write_output(features)
     remaining=[c for c in centers if key_for(c) not in cache]
-    print(f'BATCH BEENDET: {len(features)}/{EXPECTED_CENTERS} gespeichert; noch {len(remaining)} offen.',flush=True)
+    print(f'LAUF BEENDET: {len(features)}/{EXPECTED_CENTERS} gespeichert; noch {len(remaining)} offen.',flush=True)
+    if quota_hit: print('Automatischer Zeitplan versucht es beim nächsten Termin erneut.',flush=True)
     for c in remaining[:30]: print(f'FEHLT: {c["name"]} ({c["net"]}, {c["buType"]})',flush=True)
 
 if __name__=='__main__': main()
