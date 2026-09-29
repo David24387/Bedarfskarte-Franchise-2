@@ -1,0 +1,33 @@
+name: Deutschlandgrenze hervorheben
+on:
+  push:
+    paths:
+      - '.github/workflows/add-germany-border.yml'
+permissions:
+  contents: write
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Deutschlandgrenze als oberste Kartenebene ergänzen
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p=Path('index.html')
+          s=p.read_text(encoding='utf-8')
+          old="map=L.map('map').setView([51.1657,10.4515],6);map.createPane('centerPane');"
+          new="map=L.map('map').setView([51.1657,10.4515],6);map.createPane('countryBorderPane');map.getPane('countryBorderPane').style.zIndex=690;map.getPane('countryBorderPane').style.pointerEvents='none';L.geoJSON(germany,{pane:'countryBorderPane',style:{color:'#333333',weight:3,opacity:.95,fill:false,interactive:false}}).addTo(map);map.createPane('centerPane');"
+          if old not in s:
+              raise SystemExit('Zielstelle nicht gefunden – index.html unverändert')
+          s=s.replace(old,new,1)
+          p.write_text(s,encoding='utf-8')
+          PY
+      - name: Änderung committen
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add index.html
+          git diff --cached --quiet && exit 0
+          git commit -m "Make Germany border more visible"
+          git push
