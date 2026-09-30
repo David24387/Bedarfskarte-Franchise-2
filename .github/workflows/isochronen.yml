@@ -6,8 +6,7 @@ on:
       - "daten.csv"
       - "build_isochronen.py"
   schedule:
-    # ORS quota resets every 24h. Several spaced attempts make the workflow
-    # resume automatically once quota is available again.
+    # Regelmäßig nur fehlende Isochronen ergänzen.
     - cron: "17 */6 * * *"
 permissions:
   contents: write
@@ -23,12 +22,14 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: 30-Minuten-Isochronen erzeugen
+      - name: 30-Minuten-Isochronen ergänzen
         id: build_isochrones
         continue-on-error: true
         env:
           ORS_API_KEY: ${{ secrets.ORS_API_KEY }}
-          ISOCHRONE_BATCH_SIZE: "390"
+          # Vorhandene Isochronen werden aus dem Cache übernommen.
+          # Pro Lauf werden maximal 25 FEHLENDE Standorte bei ORS angefragt.
+          ISOCHRONE_BATCH_SIZE: "25"
         run: python build_isochronen.py
 
       - name: Isochronen-Fortschritt immer committen
@@ -38,7 +39,7 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           if [ -f isochronen.json ]; then
             git add isochronen.json
-            git diff --cached --quiet || git commit -m "Update 30-minute drive-time areas (including partial progress)"
+            git diff --cached --quiet || git commit -m "Update 30-minute drive-time areas (partial progress)"
             git pull --rebase origin main
             git push
           else
@@ -57,7 +58,7 @@ jobs:
               n=len(json.loads(p.read_text(encoding='utf-8')).get('features',[]))
               print(f'Aktueller Stand: {n}/390 Fahrzeitgebiete gespeichert.')
               if n < 390:
-                  print('Noch nicht vollständig. Der nächste geplante Lauf versucht automatisch weiterzumachen.')
+                  print(f'Noch {390-n} offen. Der nächste Lauf ergänzt ausschließlich fehlende Standorte.')
               else:
                   print('Vollständig: 390/390.')
           PY
