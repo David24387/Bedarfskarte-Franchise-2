@@ -6,7 +6,6 @@ on:
       - "daten.csv"
       - "build_isochronen.py"
   schedule:
-    # Regelmäßig nur fehlende Isochronen ergänzen.
     - cron: "17 */6 * * *"
 permissions:
   contents: write
@@ -18,32 +17,44 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
 
-      - name: 30-Minuten-Isochronen ergänzen
+      - name: 30-Minuten-Isochronen validieren und ergänzen
         id: build_isochrones
-        continue-on-error: true
         env:
           ORS_API_KEY: ${{ secrets.ORS_API_KEY }}
-          # Vorhandene Isochronen werden aus dem Cache übernommen.
-          # Pro Lauf werden maximal 25 FEHLENDE Standorte bei ORS angefragt.
           ISOCHRONE_BATCH_SIZE: "25"
         run: python build_isochronen.py
 
-      - name: Isochronen-Fortschritt immer committen
-        if: always()
+      - name: JSON-Struktur vor Commit prüfen
+        run: |
+          python - <<'PY'
+          import json, pathlib, sys
+          p=pathlib.Path('isochronen.json')
+          if not p.exists() or p.stat().st_size == 0:
+              sys.exit('FEHLER: isochronen.json fehlt oder ist leer.')
+          data=json.loads(p.read_text(encoding='utf-8'))
+          features=data.get('features') or []
+          if not features:
+              sys.exit('FEHLER: isochronen.json enthält keine Features.')
+          print(f'JSON-Prüfung erfolgreich: {len(features)} Fahrzeitgebiete, {p.stat().st_size} Bytes.')
+          PY
+
+      - name: Isochronen-Fortschritt committen
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          if [ -f isochronen.json ]; then
-            git add isochronen.json
-            git diff --cached --quiet || git commit -m "Update 30-minute drive-time areas (partial progress)"
+          git add isochronen.json
+          if git diff --cached --quiet; then
+            echo "Keine Änderungen an isochronen.json."
+          else
+            git commit -m "Update validated 30-minute drive-time areas"
             git pull --rebase origin main
             git push
-          else
-            echo "Keine isochronen.json vorhanden – nichts zu committen."
           fi
 
       - name: Status ausgeben
@@ -52,13 +63,18 @@ jobs:
           python - <<'PY'
           import json, pathlib
           p=pathlib.Path('isochronen.json')
-          if not p.exists():
-              print('Keine isochronen.json vorhanden.')
+          if not p.exists() or p.stat().st_size == 0:
+              print('STATUS: Keine nutzbare isochronen.json vorhanden.')
           else:
-              n=len(json.loads(p.read_text(encoding='utf-8')).get('features',[]))
-              print(f'Aktueller Stand: {n}/390 Fahrzeitgebiete gespeichert.')
-              if n < 390:
-                  print(f'Noch {390-n} offen. Der nächste Lauf ergänzt ausschließlich fehlende Standorte.')
-              else:
-                  print('Vollständig: 390/390.')
+              try:
+                  data=json.loads(p.read_text(encoding='utf-8'))
+                  n=len(data.get('features',[]))
+                  validation=(data.get('properties') or {}).get('validation','nicht markiert')
+                  print(f'STATUS: {n}/390 Fahrzeitgebiete gespeichert; Validierung: {validation}.')
+                  if n < 390:
+                      print(f'Noch {390-n} offen. Der nächste Lauf ergänzt ausschließlich fehlende oder ungültige Standorte.')
+                  else:
+                      print('Vollständig: 390/390.')
+              except Exception as e:
+                  print(f'STATUS: isochronen.json ist nicht lesbar: {e}')
           PY
