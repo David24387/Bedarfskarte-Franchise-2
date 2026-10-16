@@ -46,15 +46,13 @@ function coverageState(lat,lng){let light=false,heavy=false;const candidates=spa
 // A tile row shares one latitude. Intersect each polygon with that row once,
 // then classify its longitudes using the same even/odd rule. Boundary cases
 // retain Turf's exact point test, including holes and multipolygons.
+const rowEdges=new WeakMap(),ROW_EDGE_CELL=.05;
 function rowFeature(f,lat){
- const g=f.geometry,polys=g.type==='MultiPolygon'?g.coordinates:[g.coordinates],cuts=[];let boundary=false;
- for(const rings of polys){const xs=[];for(const ring of rings)for(let i=0,j=ring.length-1;i<ring.length;j=i++){
-  const a=ring[j],b=ring[i];if(Math.abs(a[1]-lat)<1e-10||Math.abs(b[1]-lat)<1e-10)boundary=true;
-  if((a[1]>lat)!==(b[1]>lat))xs.push(a[0]+(lat-a[1])*(b[0]-a[0])/(b[1]-a[1]));
- }xs.sort((a,b)=>a-b);cuts.push(xs)}return{f,cuts,boundary};
+ let indexed=rowEdges.get(f);if(!indexed){const g=f.geometry,polys=g.type==='MultiPolygon'?g.coordinates:[g.coordinates];indexed=polys.map(rings=>{const buckets=new Map();for(const ring of rings)for(let i=0,j=ring.length-1;i<ring.length;j=i++){const a=ring[j],b=ring[i],edge=[a,b];for(let y=Math.floor(Math.min(a[1],b[1])/ROW_EDGE_CELL);y<=Math.floor(Math.max(a[1],b[1])/ROW_EDGE_CELL);y++){let list=buckets.get(y);if(!list)buckets.set(y,list=[]);list.push(edge)}}return buckets});rowEdges.set(f,indexed)}
+ const cuts=[];let boundary=false;for(const buckets of indexed){const xs=[];for(const [a,b] of buckets.get(Math.floor(lat/ROW_EDGE_CELL))||[]){if(Math.abs(a[1]-lat)<1e-10||Math.abs(b[1]-lat)<1e-10)boundary=true;if((a[1]>lat)!==(b[1]>lat))xs.push(a[0]+(lat-a[1])*(b[0]-a[0])/(b[1]-a[1]))}xs.sort((a,b)=>a-b);cuts.push(xs)}return{f,cuts,boundary};
 }
 function rowContains(r,lat,lng){
- if(r.boundary)return featureContains(r.f,lat,lng);
+ if(!r.cuts)Object.assign(r,rowFeature(r.f,lat));if(r.boundary)return featureContains(r.f,lat,lng);
  for(const xs of r.cuts){let lo=0,hi=xs.length;while(lo<hi){const mid=(lo+hi)>>1;if(xs[mid]<lng)lo=mid+1;else hi=mid}
   if((lo<xs.length&&Math.abs(xs[lo]-lng)<1e-10)||(lo>0&&Math.abs(xs[lo-1]-lng)<1e-10))return featureContains(r.f,lat,lng);
   if(lo%2===1)return true;
@@ -63,7 +61,7 @@ function rowContains(r,lat,lng){
 function rowCoverage(lat,lngs){
  const candidates=new Set(),min=Math.min(...lngs),max=Math.max(...lngs),y=Math.floor(lat/CELL);
  for(let x=Math.floor(min/CELL);x<=Math.floor(max/CELL);x++)for(const i of spatialIndex.get(x+','+y)||[])candidates.add(i);
- const rows=[];for(const i of candidates){const f=iso[i],b=f._bbox;if(lat<b[1]||lat>b[3]||max<b[0]||min>b[2])continue;rows.push(rowFeature(f,lat))}return rows;
+ const rows=[];for(const i of candidates){const f=iso[i],b=f._bbox;if(lat<b[1]||lat>b[3]||max<b[0]||min>b[2])continue;rows.push({f})}return rows;
 }
 function rowState(rows,lat,lng){let light=false,heavy=false;for(const r of rows){const b=r.f._bbox;if(lng<b[0]||lng>b[2])continue;const t=r.f.properties.buType;if((t==='Light'&&light)||(t==='Heavy'&&heavy))continue;if(rowContains(r,lat,lng)){if(t==='Light'||t==='Mixed')light=true;if(t==='Heavy'||t==='Mixed')heavy=true;if(light&&heavy)return 1}}return !light&&!heavy?2:light?3:4}
 // Heavy point-in-polygon checks run outside the UI thread. The existing exact
@@ -82,11 +80,12 @@ ${insideDE.toString()}
 ${featureContains.toString()}
 ${indexIsochrones.toString()}
 ${coverageState.toString()}
+const rowEdges=new WeakMap(),ROW_EDGE_CELL=.05;
 ${rowFeature.toString()}
 ${rowContains.toString()}
 ${rowCoverage.toString()}
 ${rowState.toString()}
-function pump(){const deadline=performance.now()+8;while(jobs.length&&performance.now()<deadline){const j=jobs.shift();const lat=j.lats[j.row],rows=rowCoverage(lat,j.lngs);for(let x=0;x<j.lngs.length;x++){const i=j.row*j.lngs.length+x;if(!j.samples[i])j.samples[i]=insideDE(lat,j.lngs[x])?rowState(rows,lat,j.lngs[x]):5}j.row++;if(j.row<j.lats.length)jobs.push(j);else postMessage({type:'tile',id:j.id,samples:j.samples},[j.samples.buffer])}if(jobs.length)setTimeout(pump,0);else working=false}
+function pump(){const deadline=performance.now()+8;while(jobs.length&&performance.now()<deadline){const j=jobs.shift();const lat=j.lats[j.row],rows=j.lngs[j.lngs.length-1]-j.lngs[0]<=2?rowCoverage(lat,j.lngs):null;for(let x=0;x<j.lngs.length;x++){const i=j.row*j.lngs.length+x;if(!j.samples[i])j.samples[i]=insideDE(lat,j.lngs[x])?(rows?rowState(rows,lat,j.lngs[x]):coverageState(lat,j.lngs[x])):5}j.row++;if(j.row<j.lats.length)jobs.push(j);else postMessage({type:'tile',id:j.id,samples:j.samples},[j.samples.buffer])}if(jobs.length)setTimeout(pump,0);else working=false}
 onmessage=e=>{const d=e.data;if(d.type==='init'){germany=d.germany;iso=d.iso;indexCountry();indexIsochrones();postMessage({type:'ready'})}else if(d.type==='cancel'){jobs=jobs.filter(j=>j.id!==d.id)}else if(d.type==='tile'){jobs.push({...d,row:0});if(!working){working=true;setTimeout(pump,0)}}};`;
   const url=URL.createObjectURL(new Blob([source],{type:'text/javascript'}));
   try{demandWorker=new Worker(url)}finally{URL.revokeObjectURL(url)}
