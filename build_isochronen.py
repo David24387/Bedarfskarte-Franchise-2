@@ -7,7 +7,6 @@ ENDPOINT='https://api.heigit.org/openrouteservice/v2/isochrones/driving-car'
 RANGE_SECONDS=30*60
 MIN_REQUEST_INTERVAL=3.5
 MAX_RETRIES=3
-EXPECTED_CENTERS=390
 BATCH_SIZE=int(os.environ.get('ISOCHRONE_BATCH_SIZE','25'))
 CACHE_FILE=Path('isochronen.json')
 
@@ -131,9 +130,9 @@ def load_cache(centers):
     print(f'{len(cache)} valide Fahrzeitgebiete als Cache übernommen; {len(invalid)} ungültige verworfen.',flush=True)
     return cache,invalid
 
-def write_output(features):
+def write_output(features,expected_centers):
     if not features: raise RuntimeError('SICHERHEITSABBRUCH: isochronen.json würde leer geschrieben.')
-    out={'type':'FeatureCollection','properties':{'minutes':30,'profile':'driving-car','source':'openrouteservice / OpenStreetMap','validation':'center-point-inside-own-isochrone'},'features':features}
+    out={'type':'FeatureCollection','properties':{'minutes':30,'profile':'driving-car','source':'openrouteservice / OpenStreetMap','validation':'center-point-inside-own-isochrone','expectedCenters':expected_centers},'features':features}
     CACHE_FILE.write_text(json.dumps(out,ensure_ascii=False,separators=(',',':')),encoding='utf-8')
 
 def main():
@@ -147,13 +146,15 @@ def main():
         if lat is None or lon is None or bt=='Unknown': skipped.append((line_no,name,net,norm(get(d,'BU')))); continue
         centers.append({'lat':lat,'lng':lon,'buType':bt,'name':name,'net':net})
     print(f'{len(centers)} gültige FRA+ERM Standorte erkannt; {len(skipped)} übersprungen.',flush=True)
-    if len(centers)!=EXPECTED_CENTERS: raise SystemExit(f'ABBRUCH: Erwartet {EXPECTED_CENTERS}, erkannt {len(centers)}.')
+    if not centers or skipped:
+        raise SystemExit(f'ABBRUCH: Standortdaten unvollständig: {len(centers)} gültig, {len(skipped)} ohne nutzbare Koordinaten/BU. Vorhandene Fahrzeitgebiete bleiben erhalten.')
+    expected_centers=len(centers)
 
     cache,invalid=load_cache(centers); expected={key_for(c):c for c in centers}; cache={k:f for k,f in cache.items() if k in expected}
     missing=[c for c in centers if key_for(c) not in cache]
-    print(f'VALIDIERUNG: {len(cache)}/{EXPECTED_CENTERS} valide; {len(invalid)} defekte Cache-Isochronen; {len(missing)} neu/erneut zu berechnen.',flush=True)
+    print(f'VALIDIERUNG: {len(cache)}/{expected_centers} valide; {len(invalid)} defekte Cache-Isochronen; {len(missing)} neu/erneut zu berechnen.',flush=True)
     if not missing:
-        write_output([cache[key_for(c)] for c in centers]); print('ERFOLG: 390/390 valide Fahrzeitgebiete.',flush=True); return
+        write_output([cache[key_for(c)] for c in centers],expected_centers); print(f'ERFOLG: {expected_centers}/{expected_centers} valide Fahrzeitgebiete.',flush=True); return
 
     todo=missing[:BATCH_SIZE]; print(f'Dieser Lauf kann bis zu {len(todo)} fehlende/defekte Standorte ergänzen.',flush=True); last_request_started=0.0; quota_hit=False
     for pos,c in enumerate(todo,1):
@@ -190,9 +191,9 @@ def main():
             if not ok:
                 final_invalid.append((c,reason)); continue
             f['properties'].update({'buType':c['buType'],'name':c['name'],'net':c['net'],'minutes':30,'lat':c['lat'],'lng':c['lng']}); features.append(f)
-    write_output(features)
+    write_output(features,expected_centers)
     remaining=[c for c in centers if key_for(c) not in cache or any(key_for(c)==key_for(x[0]) for x in final_invalid)]
-    print(f'LAUF BEENDET: {len(features)}/{EXPECTED_CENTERS} valide gespeichert; noch {len(remaining)} offen.',flush=True)
+    print(f'LAUF BEENDET: {len(features)}/{expected_centers} valide gespeichert; noch {len(remaining)} offen.',flush=True)
     print(f'DIAGNOSE: {len(centers)} Standorte / {len(features)} valide Isochronen / {len(final_invalid)} nach Endprüfung ungültig.',flush=True)
     if quota_hit: print('Automatischer Zeitplan versucht es beim nächsten Termin erneut.',flush=True)
     for c in remaining[:30]: print(f'FEHLT/UNGÜLTIG: {c["name"]} ({c["net"]}, {c["buType"]})',flush=True)
