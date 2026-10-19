@@ -35,3 +35,24 @@ Die vollständige Suchzeichnung bleibt rechenintensiv. Die Oberfläche bleibt w�
 Die Node-Regressionsskripte unter `tests/` dokumentieren ihre Aufrufe in der ersten Zeile. `browser-performance.cjs` benötigt Playwright, Chromium und lokale Fixtures: Turf v7, Leaflet 1.9.4 JS/CSS, PapaParse 5.3.2 sowie die unveränderte Deutschland-GeoJSON-Datei des bisherigen Codes. `BROWSER_EXECUTABLE` und `RESULT_PATH` sind optional.
 
 Die ursprüngliche Cloud-Vorschau erlaubte keinen verlässlichen Netzwerk-Ladevergleich; deshalb wurde dieser kontrollierte lokale Browservergleich ergänzt. Die früher dokumentierte Browser-Blockade ist damit aufgelöst, ohne eine Verbesserung öffentlicher Übertragungszeiten zu behaupten.
+
+
+## Nachoptimierung – 19.10.2026
+
+Vergleich gegen main `ecb3bad` mit identischen aktuellen Daten (389 Standorte, 385 Fahrzeitgebiete, 10.754 Regionen). Chromium 153, lokale identische Antworten einschließlich Worker-Abhängigkeit, keine Produktions-Netzwerklatenz. Messwerte sind Einzelmessungen.
+
+| Vorgang | Vorher | Nachher |
+|---|---:|---:|
+| Kartenaufbau | 3.292 ms | 2.746 ms |
+| Zoom 6 → 7 | 1.593 ms | 483 ms |
+| Verschieben | 480 ms | 441 ms |
+| Frankfurt-Suche inkl. fertiger Bedarfsflächen | 552 ms | 489 ms |
+| Erster roter Bedarfsfilter aus | 123 ms | 171 ms |
+| Erneuter Bedarfsfilter | 248 ms | 235 ms |
+| Erstmaliges Anzeigen interner Hotspots | 111 ms | 570 ms |
+
+Die schnellere zeilenweise Flächenklassifikation wird jetzt auch für große Kartenausschnitte genutzt. Vollständig berechnete Kacheln umgehen den Worker bei erneuter Anzeige. Regionale Popup-Abfragen überspringen Polygone nach exakter Bounding-Box-Prüfung. Die interne Hotspot-Geometrie wird erst bei Bedarf aufgebaut: Dadurch entfällt die Arbeit im normalen Betrieb, beim ersten Freischalten entsteht dafür zusätzlicher Aufwand. Die automatische Aktivierung des Hotspot-Schalters nach Login bleibt erhalten. Nicht jeder Filtervorgang ist schneller; der deutlichste Gewinn liegt beim Zoomen.
+
+Validiert: 19.305 exakte Abdeckungspunkte, 10.620 Zeilenklassifikationen einschließlich Polygonkanten und angrenzender Punkte, 96 unveränderte Regional-Popups, 1.334 identische Hotspot-Geometrien samt Stil und Labels, Suchabbruch und veraltete Suchantworten, kompletter Kachelcache ohne Worker-Aufruf. Kontrollierter Browservergleich inklusive Standortfilter, Bedarfsfilter, Zoom, Verschieben, Frankfurt-Popup, interner Ebene und Abschalten erfolgreich; keine Seitenfehler. Syntax und Whitespace geprüft. Daten und fachliche Regeln unverändert.
+
+Reproduzierbare aktuelle Vergleichsreferenz: `BASELINE_REF=ecb3bad`; die aktualisierten Browser- und Coverage-Skripte verwenden andernfalls HEAD. Ergebnisdatei: `tests/browser-performance-results-2026-10-19.json`.

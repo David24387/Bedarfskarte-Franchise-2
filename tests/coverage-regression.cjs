@@ -1,7 +1,7 @@
 // Run: node tests/coverage-regression.cjs /path/to/turf.min.js
 const fs=require('node:fs'),vm=require('node:vm'),cp=require('node:child_process'),assert=require('node:assert/strict');
 const turf=require(process.argv[2]);
-const base=cp.execFileSync('git',['show','dfb6d75b7f50391499d366aa37be6a0bfdbf1cb8:index.html'],{encoding:'utf8'});
+const base=cp.execFileSync('git',['show',(process.env.BASELINE_REF||'HEAD')+':index.html'],{encoding:'utf8'});
 const head=fs.readFileSync('index.html','utf8');
 const iso=JSON.parse(fs.readFileSync('isochronen.json')).features;
 iso.forEach(f=>f._bbox=turf.bbox(f));
@@ -13,5 +13,5 @@ for(const f of iso){const b=f._bbox;points.push([b[1],b[0]],[b[3],b[2]],[(b[1]+b
 for(let lat=47;lat<=55;lat+=.5)for(let lng=5.5;lng<=15.5;lng+=.5)for(const d of [-1e-10,0,1e-10])points.push([lat+d,lng+d]);
 function run(c){c.points=points;const start=performance.now();const result=vm.runInContext('points.map(([lat,lng])=>{const s=coverage(lat,lng);return [s.light,s.heavy,s.state,s.near.map(f=>iso.indexOf(f))]})',c);return{ms:performance.now()-start,result:JSON.parse(JSON.stringify(result))};}
 const a=run(old),b=run(next);assert.deepEqual(b.result,a.result);
-for(const path of ['daten.csv','isochronen.json','regionaldaten.json'])assert.equal(cp.execFileSync('git',['diff','dfb6d75b7f50391499d366aa37be6a0bfdbf1cb8','--',path],{encoding:'utf8'}),'');
+for(const path of ['daten.csv','isochronen.json','regionaldaten.json'])assert.equal(cp.execFileSync('git',['diff',process.env.BASELINE_REF||'HEAD','--',path],{encoding:'utf8'}),'');
 console.log(JSON.stringify({points:points.length,mismatches:0,baselineMs:a.ms,optimizedMs:b.ms,speedup:a.ms/b.ms,dataFilesUnchanged:true},null,2));

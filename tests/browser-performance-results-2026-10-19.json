@@ -1,0 +1,109 @@
+{
+  "method": "Chromium; identical local response bodies; OSM tiles replaced by 1px fixture; no public network latency included",
+  "results": [
+    {
+      "version": "baseline",
+      "initial": {
+        "ms": 3291.899999999907,
+        "maxLongTaskMs": 480,
+        "centers": 389,
+        "iso": 385,
+        "regions": 10754,
+        "engines": [
+          "worker"
+        ]
+      },
+      "stages": [
+        {
+          "name": "BU filter Mixed off",
+          "ms": 136,
+          "maxLongTaskMs": 0
+        },
+        {
+          "name": "Demand red off",
+          "ms": 123,
+          "maxLongTaskMs": 0
+        },
+        {
+          "name": "Zoom 6 to 7",
+          "ms": 1593,
+          "maxLongTaskMs": 0
+        },
+        {
+          "name": "Pan 160px",
+          "ms": 480,
+          "maxLongTaskMs": 63
+        },
+        {
+          "name": "Search Frankfurt",
+          "ms": 552,
+          "maxLongTaskMs": 0
+        },
+        {
+          "name": "Repeat demand filter",
+          "ms": 248,
+          "maxLongTaskMs": 0
+        },
+        {
+          "name": "Internal hotspots",
+          "ms": 111,
+          "maxLongTaskMs": 0
+        }
+      ],
+      "popup": "Frankfurt am Main – 30-Minuten-Fahrzeit\nAuswertung nach tatsächlicher Auto-Fahrzeit\n13 Fahrzeitgebiete überdecken diesen Punkt\n🟢 GUTE ABDECKUNG:\nLight und Heavy sind innerhalb von 30 Minuten Fahrzeit erreichbar.\nMarktpotenzial: nur für tatsächliche Versorgungslücken.\nGEBIETS-KPIS\nLight-Abdeckung:\nJa\nHeavy-Abdeckung:\nJa\nERREICHBARE CENTER ≤ 30 MIN.\nFrankfurt am Main · BU Light\nRuesselsheim · BU Light\nDarmstadt · BU Light\nDarmstadt · BU Light\nMainz · BU Mixed\nMoerfelden · BU Heavy\nWiesbaden · BU Light\nFrankfurt am Main · BU Light\nFrankfurt am Main · BU Light\nMainz-Kastel · BU Light\nMaintal · BU Light\nRaunheim · BU Light\nPfungstadt · BU Light",
+      "errors": []
+    },
+    {
+      "version": "optimized",
+      "initial": {
+        "ms": 2745.7999999998137,
+        "maxLongTaskMs": 364,
+        "centers": 389,
+        "iso": 385,
+        "regions": 10754,
+        "engines": [
+          "worker"
+        ]
+      },
+      "stages": [
+        {
+          "name": "BU filter Mixed off",
+          "ms": 118,
+          "maxLongTaskMs": 0
+        },
+        {
+          "name": "Demand red off",
+          "ms": 171,
+          "maxLongTaskMs": 0
+        },
+        {
+          "name": "Zoom 6 to 7",
+          "ms": 483,
+          "maxLongTaskMs": 0
+        },
+        {
+          "name": "Pan 160px",
+          "ms": 441,
+          "maxLongTaskMs": 0
+        },
+        {
+          "name": "Search Frankfurt",
+          "ms": 489,
+          "maxLongTaskMs": 55
+        },
+        {
+          "name": "Repeat demand filter",
+          "ms": 235,
+          "maxLongTaskMs": 0
+        },
+        {
+          "name": "Internal hotspots",
+          "ms": 570,
+          "maxLongTaskMs": 0
+        }
+      ],
+      "popup": "Frankfurt am Main – 30-Minuten-Fahrzeit\nAuswertung nach tatsächlicher Auto-Fahrzeit\n13 Fahrzeitgebiete überdecken diesen Punkt\n🟢 GUTE ABDECKUNG:\nLight und Heavy sind innerhalb von 30 Minuten Fahrzeit erreichbar.\nMarktpotenzial: nur für tatsächliche Versorgungslücken.\nGEBIETS-KPIS\nLight-Abdeckung:\nJa\nHeavy-Abdeckung:\nJa\nERREICHBARE CENTER ≤ 30 MIN.\nFrankfurt am Main · BU Light\nRuesselsheim · BU Light\nDarmstadt · BU Light\nDarmstadt · BU Light\nMainz · BU Mixed\nMoerfelden · BU Heavy\nWiesbaden · BU Light\nFrankfurt am Main · BU Light\nFrankfurt am Main · BU Light\nMainz-Kastel · BU Light\nMaintal · BU Light\nRaunheim · BU Light\nPfungstadt · BU Light",
+      "errors": []
+    }
+  ]
+}
