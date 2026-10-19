@@ -70,11 +70,14 @@ jobs:
                   data=json.loads(p.read_text(encoding='utf-8'))
                   n=len(data.get('features',[]))
                   validation=(data.get('properties') or {}).get('validation','nicht markiert')
-                  print(f'STATUS: {n}/390 Fahrzeitgebiete gespeichert; Validierung: {validation}.')
-                  if n < 390:
-                      print(f'Noch {390-n} offen. Der nächste Lauf ergänzt ausschließlich fehlende oder ungültige Standorte.')
+                  expected=(data.get('properties') or {}).get('expectedCenters')
+                  print(f'STATUS: {n}/{expected if expected is not None else "unbekannt"} Fahrzeitgebiete gespeichert; Validierung: {validation}.')
+                  if expected is None:
+                      print('Sollanzahl noch nicht ermittelt; siehe Berechnungsschritt.')
+                  elif n < expected:
+                      print(f'Noch {expected-n} offen. Der nächste Lauf ergänzt ausschließlich fehlende oder ungültige Standorte.')
                   else:
-                      print('Vollständig: 390/390.')
+                      print(f'Vollständig: {n}/{expected}.')
               except Exception as e:
                   print(f'STATUS: isochronen.json ist nicht lesbar: {e}')
           PY
