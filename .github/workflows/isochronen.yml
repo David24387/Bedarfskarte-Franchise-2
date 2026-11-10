@@ -6,7 +6,7 @@ on:
       - "daten.csv"
       - "build_isochronen.py"
   schedule:
-    - cron: "17 */6 * * *"
+    - cron: "*/15 * * * *"
 permissions:
   contents: write
 concurrency:
