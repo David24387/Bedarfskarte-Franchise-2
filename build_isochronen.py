@@ -180,10 +180,10 @@ def main():
             try:
                 time.sleep(MIN_REQUEST_INTERVAL); data=request_isochrone(c['lng']+0.00015,c['lat']+0.00015,minutes); fs=data.get('features') or []
                 if not fs: raise RuntimeError('Keine Fallback-Isochrone')
-                f=fs[0]; f['properties']={'buType':c['buType'],'name':c['name'],'net':c['net'],'minutes':30,'lat':c['lat'],'lng':c['lng'],'routingFallback':True}
+                f=fs[0]; f['properties']={'buType':c['buType'],'name':c['name'],'net':c['net'],'minutes':minutes,'service':('Light' if minutes==20 else 'Heavy'),'lat':c['lat'],'lng':c['lng'],'routingFallback':True}
                 ok,reason=valid_feature_for_center(f,c)
                 if not ok: raise RuntimeError('Fallback-Isochrone ungültig: '+reason)
-                cache[key_for(c)]=f
+                cache[range_key(c,minutes)]=f
             except QuotaExceeded as e:
                 print(f'QUOTA: {e} Lauf wird sofort beendet; vorhandener Fortschritt bleibt erhalten.',flush=True); quota_hit=True; break
             except Exception as e: print(f'OFFEN: {c["name"]} – {e}',flush=True)
