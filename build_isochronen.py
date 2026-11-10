@@ -5,10 +5,13 @@ from pathlib import Path
 API_KEY=os.environ.get('ORS_API_KEY','').strip()
 ENDPOINT='https://api.heigit.org/openrouteservice/v2/isochrones/driving-car'
 RANGE_SECONDS=30*60
+TARGET_FILE=Path('isochronen_20_40.json')
+def ranges_for(c): return [20] if c['buType']=='Light' else [40] if c['buType']=='Heavy' else [20,40]
+def range_key(c,minutes): return key_for(c)+'|'+str(minutes)
 MIN_REQUEST_INTERVAL=3.5
 MAX_RETRIES=3
 BATCH_SIZE=int(os.environ.get('ISOCHRONE_BATCH_SIZE','25'))
-CACHE_FILE=Path('isochronen.json')
+CACHE_FILE=TARGET_FILE
 
 if not API_KEY: raise SystemExit('ORS_API_KEY fehlt.')
 class QuotaExceeded(Exception): pass
@@ -83,8 +86,8 @@ def valid_feature_for_center(f,c):
         return False,f'Geometrieprüfung fehlgeschlagen: {e}'
     return True,''
 
-def request_isochrone(lon,lat):
-    body=json.dumps({'locations':[[lon,lat]],'range':[RANGE_SECONDS],'range_type':'time','location_type':'start'}).encode()
+def request_isochrone(lon,lat,minutes):
+    body=json.dumps({'locations':[[lon,lat]],'range':[minutes*60],'range_type':'time','location_type':'start'}).encode()
     last_error=None
     for attempt in range(1,MAX_RETRIES+1):
         req=urllib.request.Request(ENDPOINT,data=body,headers={'Authorization':API_KEY,'Content-Type':'application/json','Accept':'application/geo+json','User-Agent':'Euromaster-Bedarfskarte/3.3'},method='POST')
@@ -122,8 +125,10 @@ def load_cache(centers):
                 ok,reason=valid_feature_for_center(f,current)
                 if not ok:
                     invalid.append((current,reason)); print(f'CACHE UNGÜLTIG: {current["name"]} ({current["net"]}) – {reason}',flush=True); continue
-                p.update({'net':current['net'],'buType':current['buType'],'name':current['name'],'minutes':30,'lat':current['lat'],'lng':current['lng']})
-                f['properties']=p; cache[key_for(current)]=f
+                minutes=int(p.get('minutes',0))
+                if minutes not in ranges_for(current): continue
+                p.update({'net':current['net'],'buType':current['buType'],'name':current['name'],'minutes':minutes,'service':('Light' if minutes==20 else 'Heavy'),'lat':current['lat'],'lng':current['lng']})
+                f['properties']=p; cache[range_key(current,minutes)]=f
             except Exception as e:
                 print(f'Cache-Feature übersprungen: {e}',flush=True)
     except Exception as e: print(f'Cache konnte nicht gelesen werden: {e}',flush=True)
@@ -132,7 +137,7 @@ def load_cache(centers):
 
 def write_output(features,expected_centers):
     if not features: raise RuntimeError('SICHERHEITSABBRUCH: isochronen.json würde leer geschrieben.')
-    out={'type':'FeatureCollection','properties':{'minutes':30,'profile':'driving-car','source':'openrouteservice / OpenStreetMap','validation':'center-point-inside-own-isochrone','expectedCenters':expected_centers},'features':features}
+    out={'type':'FeatureCollection','properties':{'minutesByService':{'Light':20,'Heavy':40},'profile':'driving-car','source':'openrouteservice / OpenStreetMap','validation':'center-point-inside-own-isochrone','expectedCenters':expected_centers},'features':features}
     CACHE_FILE.write_text(json.dumps(out,ensure_ascii=False,separators=(',',':')),encoding='utf-8')
 
 def main():
@@ -148,32 +153,32 @@ def main():
     print(f'{len(centers)} gültige FRA+ERM Standorte erkannt; {len(skipped)} übersprungen.',flush=True)
     if not centers or skipped:
         raise SystemExit(f'ABBRUCH: Standortdaten unvollständig: {len(centers)} gültig, {len(skipped)} ohne nutzbare Koordinaten/BU. Vorhandene Fahrzeitgebiete bleiben erhalten.')
-    expected_centers=len(centers)
+    expected_centers=sum(len(ranges_for(c)) for c in centers)
 
-    cache,invalid=load_cache(centers); expected={key_for(c):c for c in centers}; cache={k:f for k,f in cache.items() if k in expected}
-    missing=[c for c in centers if key_for(c) not in cache]
+    cache,invalid=load_cache(centers); expected={range_key(c,m):(c,m) for c in centers for m in ranges_for(c)}; cache={k:f for k,f in cache.items() if k in expected}
+    missing=[(c,m) for c in centers for m in ranges_for(c) if range_key(c,m) not in cache]
     print(f'VALIDIERUNG: {len(cache)}/{expected_centers} valide; {len(invalid)} defekte Cache-Isochronen; {len(missing)} neu/erneut zu berechnen.',flush=True)
     if not missing:
-        write_output([cache[key_for(c)] for c in centers],expected_centers); print(f'ERFOLG: {expected_centers}/{expected_centers} valide Fahrzeitgebiete.',flush=True); return
+        write_output([cache[range_key(c,m)] for c in centers for m in ranges_for(c)],expected_centers); print(f'ERFOLG: {expected_centers}/{expected_centers} valide Fahrzeitgebiete.',flush=True); return
 
     todo=missing[:BATCH_SIZE]; print(f'Dieser Lauf kann bis zu {len(todo)} fehlende/defekte Standorte ergänzen.',flush=True); last_request_started=0.0; quota_hit=False
-    for pos,c in enumerate(todo,1):
+    for pos,(c,minutes) in enumerate(todo,1):
         elapsed=time.monotonic()-last_request_started
         if last_request_started and elapsed<MIN_REQUEST_INTERVAL: time.sleep(MIN_REQUEST_INTERVAL-elapsed)
         print(f'Neu {pos}/{len(todo)}: {c["name"]} ({c["net"]}, {c["buType"]})',flush=True); last_request_started=time.monotonic()
         try:
-            data=request_isochrone(c['lng'],c['lat']); fs=data.get('features') or []
+            data=request_isochrone(c['lng'],c['lat'],minutes); fs=data.get('features') or []
             if not fs: raise RuntimeError('Keine Isochrone zurückgegeben')
-            f=fs[0]; f['properties']={'buType':c['buType'],'name':c['name'],'net':c['net'],'minutes':30,'lat':c['lat'],'lng':c['lng']}
+            f=fs[0]; f['properties']={'buType':c['buType'],'name':c['name'],'net':c['net'],'minutes':minutes,'service':('Light' if minutes==20 else 'Heavy'),'lat':c['lat'],'lng':c['lng']}
             ok,reason=valid_feature_for_center(f,c)
             if not ok: raise RuntimeError('ORS-Isochrone ungültig: '+reason)
-            cache[key_for(c)]=f
+            cache[range_key(c,minutes)]=f
         except QuotaExceeded as e:
             print(f'QUOTA: {e} Lauf wird sofort beendet; vorhandener Fortschritt bleibt erhalten.',flush=True); quota_hit=True; break
         except Exception as first:
             print(f'Primäre Anfrage fehlgeschlagen: {c["name"]} – {first}',flush=True)
             try:
-                time.sleep(MIN_REQUEST_INTERVAL); data=request_isochrone(c['lng']+0.00015,c['lat']+0.00015); fs=data.get('features') or []
+                time.sleep(MIN_REQUEST_INTERVAL); data=request_isochrone(c['lng']+0.00015,c['lat']+0.00015,minutes); fs=data.get('features') or []
                 if not fs: raise RuntimeError('Keine Fallback-Isochrone')
                 f=fs[0]; f['properties']={'buType':c['buType'],'name':c['name'],'net':c['net'],'minutes':30,'lat':c['lat'],'lng':c['lng'],'routingFallback':True}
                 ok,reason=valid_feature_for_center(f,c)
@@ -185,17 +190,18 @@ def main():
 
     features=[]; final_invalid=[]
     for c in centers:
-        k=key_for(c)
-        if k in cache:
+        for minutes in ranges_for(c):
+            k=range_key(c,minutes)
+            if k not in cache: continue
             f=cache[k]; ok,reason=valid_feature_for_center(f,c)
             if not ok:
-                final_invalid.append((c,reason)); continue
-            f['properties'].update({'buType':c['buType'],'name':c['name'],'net':c['net'],'minutes':30,'lat':c['lat'],'lng':c['lng']}); features.append(f)
+                final_invalid.append((c,minutes,reason)); continue
+            f['properties'].update({'buType':c['buType'],'service':'Light' if minutes==20 else 'Heavy','name':c['name'],'net':c['net'],'minutes':minutes,'lat':c['lat'],'lng':c['lng']})
+            features.append(f)
     write_output(features,expected_centers)
-    remaining=[c for c in centers if key_for(c) not in cache or any(key_for(c)==key_for(x[0]) for x in final_invalid)]
+    remaining=[(c,m) for c in centers for m in ranges_for(c) if range_key(c,m) not in cache]
     print(f'LAUF BEENDET: {len(features)}/{expected_centers} valide gespeichert; noch {len(remaining)} offen.',flush=True)
-    print(f'DIAGNOSE: {len(centers)} Standorte / {len(features)} valide Isochronen / {len(final_invalid)} nach Endprüfung ungültig.',flush=True)
     if quota_hit: print('Automatischer Zeitplan versucht es beim nächsten Termin erneut.',flush=True)
-    for c in remaining[:30]: print(f'FEHLT/UNGÜLTIG: {c["name"]} ({c["net"]}, {c["buType"]})',flush=True)
+    for c,m in remaining[:30]: print(f'FEHLT: {c["name"]} ({c["net"]}, {c["buType"]}, {m} Min.)',flush=True)
 
 if __name__=='__main__': main()
