@@ -108,11 +108,12 @@ def request_isochrone(lon,lat,minutes):
 
 def load_cache(centers):
     cache={}; invalid=[]
+    print(f'CACHE-DIAGNOSE: {CACHE_FILE} vorhanden={CACHE_FILE.exists()}, Groesse={CACHE_FILE.stat().st_size if CACHE_FILE.exists() else 0} Bytes',flush=True)
     if not CACHE_FILE.exists(): return cache,invalid
     by_coord={coord_key(c['lat'],c['lng']):c for c in centers}
     try:
         old=json.loads(CACHE_FILE.read_text(encoding='utf-8')); old_features=old.get('features',[])
-        print(f'{len(old_features)} Features in vorhandener isochronen.json.',flush=True)
+        print(f'{len(old_features)} Features in vorhandener {CACHE_FILE}.',flush=True)
         for f in old_features:
             p=f.get('properties') or {}
             try:
