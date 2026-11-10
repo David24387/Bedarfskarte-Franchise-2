@@ -1,4 +1,4 @@
-name: 30-Minuten-Fahrzeitgebiete aktualisieren
+name: 20-/40-Minuten-Fahrzeitgebiete aktualisieren
 on:
   workflow_dispatch:
   push:
@@ -23,7 +23,7 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: 30-Minuten-Isochronen validieren und ergänzen
+      - name: 20-/40-Minuten-Isochronen validieren und ergänzen
         id: build_isochrones
         env:
           ORS_API_KEY: ${{ secrets.ORS_API_KEY }}
@@ -34,13 +34,13 @@ jobs:
         run: |
           python - <<'PY'
           import json, pathlib, sys
-          p=pathlib.Path('isochronen.json')
+          p=pathlib.Path('isochronen_20_40.json')
           if not p.exists() or p.stat().st_size == 0:
-              sys.exit('FEHLER: isochronen.json fehlt oder ist leer.')
+              sys.exit('FEHLER: isochronen_20_40.json fehlt oder ist leer.')
           data=json.loads(p.read_text(encoding='utf-8'))
           features=data.get('features') or []
           if not features:
-              sys.exit('FEHLER: isochronen.json enthält keine Features.')
+              sys.exit('FEHLER: isochronen_20_40.json enthält keine Features.')
           print(f'JSON-Prüfung erfolgreich: {len(features)} Fahrzeitgebiete, {p.stat().st_size} Bytes.')
           PY
 
@@ -48,11 +48,11 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add isochronen.json
+          git add isochronen_20_40.json
           if git diff --cached --quiet; then
-            echo "Keine Änderungen an isochronen.json."
+            echo "Keine Änderungen an isochronen_20_40.json."
           else
-            git commit -m "Update validated 30-minute drive-time areas"
+            git commit -m "Update validated 20/40-minute drive-time areas"
             git pull --rebase origin main
             git push
           fi
@@ -62,9 +62,9 @@ jobs:
         run: |
           python - <<'PY'
           import json, pathlib
-          p=pathlib.Path('isochronen.json')
+          p=pathlib.Path('isochronen_20_40.json')
           if not p.exists() or p.stat().st_size == 0:
-              print('STATUS: Keine nutzbare isochronen.json vorhanden.')
+              print('STATUS: Keine nutzbare isochronen_20_40.json vorhanden.')
           else:
               try:
                   data=json.loads(p.read_text(encoding='utf-8'))
@@ -79,5 +79,5 @@ jobs:
                   else:
                       print(f'Vollständig: {n}/{expected}.')
               except Exception as e:
-                  print(f'STATUS: isochronen.json ist nicht lesbar: {e}')
+                  print(f'STATUS: isochronen_20_40.json ist nicht lesbar: {e}')
           PY
