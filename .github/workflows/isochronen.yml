@@ -27,7 +27,7 @@ jobs:
         id: build_isochrones
         env:
           ORS_API_KEY: ${{ secrets.ORS_API_KEY }}
-          ISOCHRONE_BATCH_SIZE: "25"
+          ISOCHRONE_BATCH_SIZE: "75"
         run: python build_isochronen.py
 
       - name: JSON-Struktur vor Commit prüfen
