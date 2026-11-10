@@ -130,8 +130,7 @@ async function updateRouteTimes(lat,lng,reachable,target){
  target.innerHTML=sorted.map(({f,c,n,route})=>{
  const label=displayBU(f.properties.service||f.properties.buType),limit=coverage2040?(f.properties.service==='Light'?20:40):30;
  const minutes=route&&Number.isFinite(route.seconds)?Math.ceil(route.seconds/60):null;
- const km=route&&Number.isFinite(route.meters)?(route.meters/1000).toLocaleString('de-DE',{maximumFractionDigits:1}):null;
- return `<div style="font-size:11px;border-bottom:1px dashed #ddd;padding:5px 3px"><b>${n}</b> · ${label}${minutes!==null?` · <b>${minutes} Min.</b>`:''}${km!==null?` · ${km} km Strecke`:''}${minutes!==null&&minutes>limit?' · <span style="color:#b45309">Routing-Abweichung</span>':''}</div>`;
+ return `<div style="font-size:11px;border-bottom:1px dashed #ddd;padding:5px 3px"><b>${n}</b> · ${label}${minutes!==null?` · <b>${minutes} Min.</b>`:''}${minutes!==null&&minutes>limit?' · <span style="color:#b45309">Routing-Abweichung</span>':''}</div>`;
  }).join('');
 }
 async function loadRegional(){try{const r=await fetch('./regionaldaten.json',{cache:'no-cache'});if(!r.ok)return;const j=await r.json();regional=j.regions||[];hotspotsBuilt=false;toggleHot()}catch(e){console.warn(e)}}
