@@ -40,6 +40,13 @@ def bu_type(v):
     if 'light' in x: return 'Light'
     return 'Unknown'
 def key_for(c): return f'{c["net"]}|{c["lat"]:.6f}|{c["lng"]:.6f}'
+def center_id(c): return norm(c.get('kst'))
+def distance_m(a,b):
+    lat1,lon1=math.radians(a['lat']),math.radians(a['lng'])
+    lat2,lon2=math.radians(b['lat']),math.radians(b['lng'])
+    dlat=lat2-lat1; dlon=lon2-lon1
+    h=math.sin(dlat/2)**2+math.cos(lat1)*math.cos(lat2)*math.sin(dlon/2)**2
+    return 12742000*math.asin(min(1,math.sqrt(h)))
 def coord_key(lat,lng): return f'{float(lat):.6f}|{float(lng):.6f}'
 
 def point_on_segment(px,py,ax,ay,bx,by,eps=1e-10):
@@ -122,13 +129,21 @@ def load_cache(centers):
                 if net in ('01 - ERM','02 - FRA'):
                     current=next((c for c in centers if key_for(c)==key_for({'net':net,'lat':lat,'lng':lng})),None)
                 if current is None: current=by_coord.get(coord_key(lat,lng))
+                if current is None:
+                    candidates=[c for c in centers if c['net']==net and (
+                        (norm(p.get('kst')) and norm(p.get('kst'))==center_id(c)) or
+                        (norm(p.get('name')) and norm(p.get('name'))==c['name']))]
+                    close=[(distance_m({'lat':lat,'lng':lng},c),c) for c in candidates]
+                    close.sort(key=lambda item:item[0])
+                    if close and close[0][0]<=100 and (len(close)==1 or close[1][0]>close[0][0]+50):
+                        current=close[0][1]
                 if not current: continue
                 ok,reason=valid_feature_for_center(f,current)
                 if not ok:
                     invalid.append((current,reason)); print(f'CACHE UNGÜLTIG: {current["name"]} ({current["net"]}) – {reason}',flush=True); continue
                 minutes=int(p.get('minutes',0))
                 if minutes not in ranges_for(current): continue
-                p.update({'net':current['net'],'buType':current['buType'],'name':current['name'],'minutes':minutes,'service':('Light' if minutes==20 else 'Heavy'),'lat':current['lat'],'lng':current['lng']})
+                p.update({'net':current['net'],'buType':current['buType'],'name':current['name'],'minutes':minutes,'service':('Light' if minutes==20 else 'Heavy'),'lat':current['lat'],'lng':current['lng'],'kst':center_id(current)})
                 f['properties']=p; cache[range_key(current,minutes)]=f
             except Exception as e:
                 print(f'Cache-Feature übersprungen: {e}',flush=True)
@@ -139,7 +154,15 @@ def load_cache(centers):
 def write_output(features,expected_centers):
     if not features: raise RuntimeError('SICHERHEITSABBRUCH: isochronen.json würde leer geschrieben.')
     out={'type':'FeatureCollection','properties':{'minutesByService':{'Light':20,'Heavy':40},'profile':'driving-car','source':'openrouteservice / OpenStreetMap','validation':'center-point-inside-own-isochrone','expectedCenters':expected_centers},'features':features}
-    CACHE_FILE.write_text(json.dumps(out,ensure_ascii=False,separators=(',',':')),encoding='utf-8')
+    # Never replace a larger cache with a smaller one after coordinate updates.
+    if CACHE_FILE.exists():
+        previous=json.loads(CACHE_FILE.read_text(encoding='utf-8'))
+        previous_count=len(previous.get('features') or [])
+        if len(features)<previous_count:
+            raise RuntimeError(f'SICHERHEITSABBRUCH: {len(features)} neue Features < {previous_count} vorhandene. Cache bleibt unverändert.')
+    tmp=CACHE_FILE.with_suffix('.tmp')
+    tmp.write_text(json.dumps(out,ensure_ascii=False,separators=(',',':')),encoding='utf-8')
+    tmp.replace(CACHE_FILE)
 
 def main():
     rows=list(csv.reader(Path('daten.csv').open(encoding='utf-8-sig',newline='')))
@@ -150,7 +173,7 @@ def main():
         if net not in ('02 - FRA','01 - ERM'): continue
         lat=num(get(d,'Lat.','Lat','Latitude')); lon=num(get(d,'Long.','Long','Lng','Longitude')); bt=bu_type(get(d,'BU')); name=norm(get(d,'Ort','KST','Netzkennung'))
         if lat is None or lon is None or bt=='Unknown': skipped.append((line_no,name,net,norm(get(d,'BU')))); continue
-        centers.append({'lat':lat,'lng':lon,'buType':bt,'name':name,'net':net})
+        centers.append({'lat':lat,'lng':lon,'buType':bt,'name':name,'net':net,'kst':norm(get(d,'KST'))})
     print(f'{len(centers)} gültige FRA+ERM Standorte erkannt; {len(skipped)} übersprungen.',flush=True)
     if not centers or skipped:
         raise SystemExit(f'ABBRUCH: Standortdaten unvollständig: {len(centers)} gültig, {len(skipped)} ohne nutzbare Koordinaten/BU. Vorhandene Fahrzeitgebiete bleiben erhalten.')
@@ -170,7 +193,7 @@ def main():
         try:
             data=request_isochrone(c['lng'],c['lat'],minutes); fs=data.get('features') or []
             if not fs: raise RuntimeError('Keine Isochrone zurückgegeben')
-            f=fs[0]; f['properties']={'buType':c['buType'],'name':c['name'],'net':c['net'],'minutes':minutes,'service':('Light' if minutes==20 else 'Heavy'),'lat':c['lat'],'lng':c['lng']}
+            f=fs[0]; f['properties']={'buType':c['buType'],'name':c['name'],'net':c['net'],'minutes':minutes,'service':('Light' if minutes==20 else 'Heavy'),'lat':c['lat'],'lng':c['lng'],'kst':center_id(c)}
             ok,reason=valid_feature_for_center(f,c)
             if not ok: raise RuntimeError('ORS-Isochrone ungültig: '+reason)
             cache[range_key(c,minutes)]=f
@@ -181,7 +204,7 @@ def main():
             try:
                 time.sleep(MIN_REQUEST_INTERVAL); data=request_isochrone(c['lng']+0.00015,c['lat']+0.00015,minutes); fs=data.get('features') or []
                 if not fs: raise RuntimeError('Keine Fallback-Isochrone')
-                f=fs[0]; f['properties']={'buType':c['buType'],'name':c['name'],'net':c['net'],'minutes':minutes,'service':('Light' if minutes==20 else 'Heavy'),'lat':c['lat'],'lng':c['lng'],'routingFallback':True}
+                f=fs[0]; f['properties']={'buType':c['buType'],'name':c['name'],'net':c['net'],'minutes':minutes,'service':('Light' if minutes==20 else 'Heavy'),'lat':c['lat'],'lng':c['lng'],'kst':center_id(c),'routingFallback':True}
                 ok,reason=valid_feature_for_center(f,c)
                 if not ok: raise RuntimeError('Fallback-Isochrone ungültig: '+reason)
                 cache[range_key(c,minutes)]=f
