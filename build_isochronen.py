@@ -12,6 +12,8 @@ MIN_REQUEST_INTERVAL=3.5
 MAX_RETRIES=3
 BATCH_SIZE=int(os.environ.get('ISOCHRONE_BATCH_SIZE','25'))
 CACHE_FILE=TARGET_FILE
+ARCHIVE_FILE=Path('isochronen_20_40_vor_wiederherstellung.json')
+HISTORIC_FILE=Path('isochronen_20_40_historisch.json')
 
 if not API_KEY: raise SystemExit('ORS_API_KEY fehlt.')
 class QuotaExceeded(Exception): pass
@@ -116,11 +118,15 @@ def request_isochrone(lon,lat,minutes):
 def load_cache(centers):
     cache={}; invalid=[]
     print(f'CACHE-DIAGNOSE: {CACHE_FILE} vorhanden={CACHE_FILE.exists()}, Groesse={CACHE_FILE.stat().st_size if CACHE_FILE.exists() else 0} Bytes; 75er-Batch erneut angefordert',flush=True)
-    if not CACHE_FILE.exists(): return cache,invalid
+    sources=[p for p in (CACHE_FILE,HISTORIC_FILE,ARCHIVE_FILE) if p.exists()]
+    if not sources: return cache,invalid
     by_coord={coord_key(c['lat'],c['lng']):c for c in centers}
     try:
-        old=json.loads(CACHE_FILE.read_text(encoding='utf-8')); old_features=old.get('features',[])
-        print(f'{len(old_features)} Features in vorhandener {CACHE_FILE}.',flush=True)
+        old_features=[]
+        for source in sources:
+            loaded=json.loads(source.read_text(encoding='utf-8')).get('features',[])
+            print(f'{len(loaded)} Features in {source}.',flush=True)
+            old_features.extend(loaded)
         for f in old_features:
             p=f.get('properties') or {}
             try:
@@ -154,12 +160,9 @@ def load_cache(centers):
 def write_output(features,expected_centers):
     if not features: raise RuntimeError('SICHERHEITSABBRUCH: isochronen.json würde leer geschrieben.')
     out={'type':'FeatureCollection','properties':{'minutesByService':{'Light':20,'Heavy':40},'profile':'driving-car','source':'openrouteservice / OpenStreetMap','validation':'center-point-inside-own-isochrone','expectedCenters':expected_centers},'features':features}
-    # Never replace a larger cache with a smaller one after coordinate updates.
-    if CACHE_FILE.exists():
-        previous=json.loads(CACHE_FILE.read_text(encoding='utf-8'))
-        previous_count=len(previous.get('features') or [])
-        if len(features)<previous_count:
-            raise RuntimeError(f'SICHERHEITSABBRUCH: {len(features)} neue Features < {previous_count} vorhandene. Cache bleibt unverändert.')
+    # Original historical data is preserved separately, even if coordinates change.
+    if not HISTORIC_FILE.exists() and CACHE_FILE.exists():
+        HISTORIC_FILE.write_bytes(CACHE_FILE.read_bytes())
     tmp=CACHE_FILE.with_suffix('.tmp')
     tmp.write_text(json.dumps(out,ensure_ascii=False,separators=(',',':')),encoding='utf-8')
     tmp.replace(CACHE_FILE)
