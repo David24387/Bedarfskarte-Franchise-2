@@ -1,12 +1,6 @@
 name: 20-/40-Minuten-Fahrzeitgebiete aktualisieren
 on:
   workflow_dispatch:
-  push:
-    paths:
-      - "daten.csv"
-      - "build_isochronen.py"
-  schedule:
-    - cron: "*/15 * * * *"
 permissions:
   contents: write
 concurrency:
