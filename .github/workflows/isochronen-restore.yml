@@ -1,0 +1,39 @@
+name: Gesicherten Isochronenstand wiederherstellen
+on:
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency:
+  group: isochronen-update
+  cancel-in-progress: false
+jobs:
+  restore:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Gesicherten Stand aus Git-Historie holen und pruefen
+        run: |
+          git show 78925231e:isochronen_20_40.json > /tmp/isochronen_restore.json
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          old=json.loads(Path('/tmp/isochronen_restore.json').read_text())
+          n=len(old.get('features',[]))
+          print(f'Wiederherstellung: {n} Fahrzeitgebiete')
+          if n!=355:
+              raise SystemExit(f'ABBRUCH: Erwartet 355, gefunden {n}')
+          current=json.loads(Path('isochronen_20_40.json').read_text())
+          print(f'Aktuell: {len(current.get("features",[]))}')
+          PY
+          cp isochronen_20_40.json isochronen_20_40_vor_wiederherstellung.json
+          cp /tmp/isochronen_restore.json isochronen_20_40.json
+      - name: Gesicherten Stand committen
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add isochronen_20_40.json isochronen_20_40_vor_wiederherstellung.json
+          git commit -m "Restore 355 saved isochrones and archive previous cache"
+          git pull --rebase origin main
+          git push
