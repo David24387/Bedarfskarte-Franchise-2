@@ -117,7 +117,7 @@ def request_isochrone(lon,lat,minutes):
 
 def load_cache(centers):
     cache={}; invalid=[]
-    print(f'CACHE-DIAGNOSE: {CACHE_FILE} vorhanden={CACHE_FILE.exists()}, Groesse={CACHE_FILE.stat().st_size if CACHE_FILE.exists() else 0} Bytes; 75er-Batch erneut angefordert',flush=True)
+    print(f'CACHE-DIAGNOSE: {CACHE_FILE} vorhanden={CACHE_FILE.exists()}, Groesse={CACHE_FILE.stat().st_size if CACHE_FILE.exists() else 0} Bytes; 75er-Batch nach 385 angefordert',flush=True)
     sources=[p for p in (CACHE_FILE,HISTORIC_FILE,ARCHIVE_FILE) if p.exists()]
     if not sources: return cache,invalid
     by_coord={coord_key(c['lat'],c['lng']):c for c in centers}
