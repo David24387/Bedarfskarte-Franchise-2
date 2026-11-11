@@ -1,6 +1,8 @@
 name: 20-/40-Minuten-Fahrzeitgebiete aktualisieren
 on:
   workflow_dispatch:
+  schedule:
+    - cron: '25 3 * * *'
 permissions:
   contents: write
 concurrency:
@@ -42,7 +44,7 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add isochronen_20_40.json
+          git add isochronen_20_40.json isochronen_20_40_historisch.json
           if git diff --cached --quiet; then
             echo "Keine Änderungen an isochronen_20_40.json."
           else
